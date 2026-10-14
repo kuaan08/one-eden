@@ -1,0 +1,233 @@
+name: Legacy Mesa shader packaging (manual only)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+# Independent alternative to xbox-one-packages.yml. A stuck upstream job
+# cannot block this workflow, and the previously validated UWP executable is
+# reused instead of rebuilding the ~1,781 native C++ compilation units.
+concurrency:
+  group: xbox-one-shaders-alternative-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  mesa-and-packages:
+    name: Mesa DLL with heartbeat + signed APPX
+    runs-on: windows-2022
+    timeout-minutes: 85
+    steps:
+      - name: Checkout source and UWP packaging scripts
+        uses: actions/checkout@v4
+
+      - name: Reuse previously compiled UWP x64 executable
+        uses: actions/download-artifact@v4
+        with:
+          name: eden-uwp-x64-unsigned-diagnostic
+          run-id: 38510035231
+          repository: kuaan08/Switch
+          github-token: ${{ github.token }}
+          path: build-uwp/bin
+
+      - name: Verify existing UWP executable
+        shell: pwsh
+        run: |
+          if (!(Test-Path 'build-uwp/bin/eden-uwp.exe')) {
+            throw 'Expected eden-uwp.exe missing: cannot package this build'
+          }
+          Write-Host "UWP executable: $((Get-FileHash 'build-uwp/bin/eden-uwp.exe').Hash)"
+
+      - name: Restore official Mesa source archive
+        uses: actions/cache@v4
+        with:
+          path: mesa-build/mesa-26.2.3.tar.xz
+          key: mesa-sources-26.2.3-sha256-1628058a
+
+      - name: Ensure verified Mesa source with download retry
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $source = 'mesa-build/mesa-26.2.3.tar.xz'
+          New-Item -ItemType Directory -Force -Path 'mesa-build' | Out-Null
+          $sha = '1628058a8d2c0615975de5a15ab7bbb9638c50000b5bed9456ff423ea034a81f'
+          $ok = $false
+          for ($try = 1; $try -le 5; $try++) {
+            if ((Test-Path $source) -and ((Get-FileHash $source -Algorithm SHA256).Hash.ToLowerInvariant() -eq $sha)) {
+              $ok = $true
+              break
+            }
+            Write-Host "Downloading Mesa attempt $try / 5"
+            & curl.exe -fL -C - --retry 3 --retry-delay 3 --retry-all-errors --connect-timeout 25 --max-time 300 --output $source 'https://archive.mesa3d.org/mesa-26.2.3.tar.xz'
+            if ($LASTEXITCODE -ne 0) { Write-Warning "curl exited $LASTEXITCODE; will retry" }
+            if ((Test-Path $source) -and ((Get-FileHash $source -Algorithm SHA256).Hash.ToLowerInvariant() -eq $sha)) {
+              $ok = $true
+              break
+            }
+            Start-Sleep -Seconds 5
+          }
+          if (!$ok) { throw 'Failed to obtain verified Mesa 26.2.3 source' }
+          Write-Host 'Mesa source verified by SHA256.'
+
+      # This cache is optional. It accelerates successful re-runs, but if it is
+      # missing, the code performs a fresh and fully verifiable Windows UWP build.
+      - name: Restore incremental Mesa build and Python tools
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            mesa-build/build-uwp
+            mesa-build/venv
+            mesa-build/mesa-26.2.3
+          key: mesa-uwp-2022-alt-v1-${{ hashFiles('tools/xbox/build-spirv-to-dxil.ps1', 'tools/xbox/mesa/**', 'externals/spirv-to-dxil/include/**') }}
+          restore-keys: |
+            mesa-uwp-2022-alt-v1-
+
+      - name: Build SPIR-V to DXIL with progress heartbeat and stall detection
+        id: shader
+        shell: pwsh
+        timeout-minutes: 65
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path 'diagnostics' | Out-Null
+          $out = Join-Path (Get-Location) 'diagnostics/mesa-stdout.txt'
+          $err = Join-Path (Get-Location) 'diagnostics/mesa-stderr.txt'
+          $work = Join-Path (Get-Location) 'mesa-build'
+          $script = Join-Path (Get-Location) 'tools/xbox/build-spirv-to-dxil.ps1'
+          $arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $script + '" -WorkDir "' + $work + '"'
+          $proc = Start-Process -FilePath (Get-Command pwsh.exe).Source -ArgumentList $arguments `
+            -PassThru -RedirectStandardOutput $out -RedirectStandardError $err
+          Write-Host "Mesa compilation launched: PID $($proc.Id). Output saved to diagnostics/."
+          $begin = Get-Date
+          $lastChange = Get-Date
+          [long] $oldSize = -1
+          try {
+            while ($true) {
+              Start-Sleep -Seconds 30
+              $proc.Refresh()
+              [long] $nowSize = 0
+              foreach ($f in @($out, $err)) {
+                if (Test-Path $f) { $nowSize += (Get-Item $f).Length }
+              }
+              if ($nowSize -ne $oldSize) {
+                $lastChange = Get-Date
+                $oldSize = $nowSize
+              }
+              $elapsed = [math]::Round(((Get-Date) - $begin).TotalMinutes, 1)
+              $quiet = [math]::Round(((Get-Date) - $lastChange).TotalMinutes, 1)
+              Write-Host "Mesa heartbeat: elapsed=${elapsed}m, no-new-output=${quiet}m, log-bytes=$nowSize, exited=$($proc.HasExited)"
+              if (Test-Path $out) { Get-Content $out -Tail 3 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "build: $_" } }
+              if (Test-Path $err) { Get-Content $err -Tail 2 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "stderr: $_" } }
+              if ($proc.HasExited) { break }
+              if ($quiet -ge 16 -or $elapsed -ge 60) {
+                Write-Warning "Killing stalled Mesa build: idle ${quiet}m, elapsed ${elapsed}m."
+                & taskkill.exe /PID $proc.Id /F /T 2>$null
+                throw 'Mesa build exceeded no-output watchdog (16m) or overall time limit (60m). Inspect diagnostics artifact.'
+              }
+            }
+            $proc.WaitForExit()
+            if ($proc.ExitCode -ne 0) { throw "Mesa build exited with code $($proc.ExitCode). Inspect diagnostics artifact." }
+            $dll = Join-Path $work 'build-uwp/src/microsoft/spirv_to_dxil/spirv_to_dxil.dll'
+            if (!(Test-Path $dll)) { throw 'Mesa build finished without required DLL' }
+            Write-Host "Built UWP shader DLL: $((Get-FileHash $dll -Algorithm SHA256).Hash)"
+            $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+            $vs = & $vswhere -latest -products * -property installationPath
+            $dumpbin = Get-ChildItem (Join-Path $vs 'VC/Tools/MSVC') -Recurse -Filter dumpbin.exe -ErrorAction SilentlyContinue |
+              Where-Object { $_.FullName -match 'Hostx64\\x64\\dumpbin.exe$' } |
+              Select-Object -First 1
+            if ($dumpbin) {
+              $exports = (& $dumpbin.FullName /nologo /exports $dll) -join "`n"
+              if (!$exports.Contains('eden_spirv_to_dxil_pipeline_v2')) {
+                throw 'DLL does not export eden_spirv_to_dxil_pipeline_v2 (incompatible with Eden renderer)'
+              }
+            } else {
+              Write-Warning 'dumpbin unavailable; DLL export will be validated by emulator on console.'
+            }
+          } finally {
+            foreach ($pair in @(@('mesa-stdout.txt', $out), @('mesa-stderr.txt', $err))) {
+              if (Test-Path $pair[1]) {
+                Write-Host "=== LAST 25 LINES OF $($pair[0]) ==="
+                Get-Content $pair[1] -Tail 25 -ErrorAction SilentlyContinue
+              }
+            }
+          }
+
+      - name: Save Mesa build cache after successful DLL
+        if: steps.shader.outcome == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            mesa-build/build-uwp
+            mesa-build/venv
+            mesa-build/mesa-26.2.3
+          key: mesa-uwp-2022-alt-v1-${{ hashFiles('tools/xbox/build-spirv-to-dxil.ps1', 'tools/xbox/mesa/**', 'externals/spirv-to-dxil/include/**') }}
+
+      - name: Upload shader compiler logs even if it fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Eden-Xbox-Mesa-Shader-Build-Logs
+          path: |
+            diagnostics/*.txt
+            mesa-build/build-uwp/meson-logs/meson-log.txt
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Package normal APPX with mandatory shader DLLs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./tools/xbox/package-appx.ps1 -Variant normal -Library -BuildDir build-uwp `
+            -OutDir 'build-uwp/package/normal' `
+            -SpirvToDxil 'mesa-build/build-uwp/src/microsoft/spirv_to_dxil/spirv_to_dxil.dll' `
+            -RequireGpuShaders
+
+      - name: Package diagnostic APPX with mandatory shader DLLs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./tools/xbox/package-appx.ps1 -Variant diagnostic -Library -Profile on -BuildDir build-uwp `
+            -OutDir 'build-uwp/package/diagnostic' `
+            -SpirvToDxil 'mesa-build/build-uwp/src/microsoft/spirv_to_dxil/spirv_to_dxil.dll' `
+            -RequireGpuShaders
+
+      - name: Verify both APPX files contain real shader DLLs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Add-Type -AssemblyName System.IO.Compression
+          foreach ($variant in @('normal', 'diagnostic')) {
+            $appx = "build-uwp/package/$variant/eden-xbox-$variant.appx"
+            if (!(Test-Path $appx)) { throw "Missing APPX for $variant" }
+            $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $appx).Path)
+            try {
+              $entries = @($zip.Entries | ForEach-Object FullName)
+              foreach ($f in @('eden-uwp.exe', 'spirv_to_dxil.dll', 'dxil.dll', 'AppxManifest.xml', 'boot.cfg')) {
+                if ($entries -notcontains $f) { throw "$variant missing required package entry $f" }
+              }
+            } finally { $zip.Dispose() }
+            Write-Host "$variant fully staged and signed: $((Get-FileHash $appx -Algorithm SHA256).Hash)"
+          }
+
+      - name: Upload complete normal installable APPX
+        uses: actions/upload-artifact@v4
+        with:
+          name: Eden-Xbox-Normal-Shader-Fixed-APPX
+          path: |
+            build-uwp/package/normal/eden-xbox-normal.appx
+            build-uwp/package/normal/eden-xbox.cer
+            build-uwp/package/normal/Microsoft.VCLibs.x64.14.00.appx
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload complete diagnostic installable APPX
+        uses: actions/upload-artifact@v4
+        with:
+          name: Eden-Xbox-Diagnostic-Shader-Fixed-APPX
+          path: |
+            build-uwp/package/diagnostic/eden-xbox-diagnostic.appx
+            build-uwp/package/diagnostic/eden-xbox.cer
+            build-uwp/package/diagnostic/Microsoft.VCLibs.x64.14.00.appx
+          if-no-files-found: error
+          retention-days: 7
