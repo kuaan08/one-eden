@@ -119,7 +119,15 @@ void RasterizerD3D12::Draw(bool is_indexed, u32 instance_count) {
         return;
     }
 
+    if (!logged_first_draw) {
+        LOG_WARNING(Render, "D3D12 AV-PROBE DRAW: BEGIN CurrentGraphicsPipeline indexed={} instances={}",
+                    is_indexed, instance_count);
+    }
     GraphicsPipeline* const pipeline = pipeline_cache.CurrentGraphicsPipeline();
+    if (!logged_first_draw) {
+        LOG_WARNING(Render, "D3D12 AV-PROBE DRAW: END CurrentGraphicsPipeline pipeline={}",
+                    static_cast<void*>(pipeline));
+    }
     if (!pipeline) {
         if (trace_draws) {
             TraceDraw("draw skipped (no pipeline)", nullptr, nullptr, {}, 0, 0);
@@ -143,10 +151,17 @@ void RasterizerD3D12::Draw(bool is_indexed, u32 instance_count) {
             buffer_runtime.SetTraceBuffers(&traced_buffers);
         }
     }
+    if (!logged_first_draw) {
+        LOG_WARNING(Render, "D3D12 AV-PROBE DRAW: BEGIN Configure pipeline={}",
+                    static_cast<void*>(pipeline));
+    }
     pipeline->Configure(is_indexed,
                         {*maxwell3d, *gpu_memory, buffer_cache, texture_cache, descriptor_queue,
                          sampler_heap, scheduler},
                         bindings);
+    if (!logged_first_draw) {
+        LOG_WARNING(Render, "D3D12 AV-PROBE DRAW: END Configure");
+    }
     buffer_runtime.SetTraceBuffers(nullptr);
     if (!pipeline->Handle()) {
         BUG_TRACK_KEY(DrawSkipped, reinterpret_cast<std::uintptr_t>(pipeline),
@@ -161,8 +176,18 @@ void RasterizerD3D12::Draw(bool is_indexed, u32 instance_count) {
         return; // skip_shader
     }
     VideoCore::Perf::ScopedNsTimer record_timer{VideoCore::Perf::Counter::DrawRecordNs};
+    if (!logged_first_draw) {
+        LOG_WARNING(Render, "D3D12 AV-PROBE DRAW: BEGIN GetFramebuffer");
+    }
     const Framebuffer* const framebuffer = texture_cache.GetFramebuffer();
+    if (!logged_first_draw) {
+        LOG_WARNING(Render, "D3D12 AV-PROBE DRAW: END GetFramebuffer ptr={}",
+                    static_cast<const void*>(framebuffer));
+    }
     framebuffer->PrepareAttachments(scheduler, bindings.depth_sampled);
+    if (!logged_first_draw) {
+        LOG_WARNING(Render, "D3D12 AV-PROBE DRAW: END PrepareAttachments");
+    }
 
     const auto& draw_state = maxwell3d->draw_manager.draw_state;
     DrawParams params{
@@ -195,7 +220,14 @@ void RasterizerD3D12::Draw(bool is_indexed, u32 instance_count) {
         }
         return;
     }
+    if (!logged_first_draw) {
+        LOG_WARNING(Render, "D3D12 AV-PROBE DRAW: BEGIN RecordDraw vertices={} instances={}",
+                    params.num_vertices, params.num_instances);
+    }
     RecordDraw(*pipeline, bindings, *framebuffer, params, draw_state.topology);
+    if (!logged_first_draw) {
+        LOG_WARNING(Render, "D3D12 AV-PROBE DRAW: END RecordDraw");
+    }
     if (trace_this_draw) {
         if (material_trace.Active()) ProbeMaterialDraw(*pipeline, *framebuffer);
         if (!traced_filters.empty()) {

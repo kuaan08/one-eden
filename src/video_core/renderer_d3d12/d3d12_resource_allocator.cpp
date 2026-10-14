@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <bit>
 #include <map>
 #include <mutex>
@@ -23,6 +24,8 @@ using namespace Common::Literals;
 
 namespace {
 constexpr u64 DEFAULT_BLOCK_SIZE = 64_MiB;
+// Captures the last successful Xbox One resource-driver API before a native AV.
+std::atomic_uint g_xbox_resource_probe_sequence{0};
 
 enum class HeapClass : u8 { Texture, RenderTarget };
 
@@ -108,7 +111,20 @@ TextureResourceAllocator::~TextureResourceAllocator() = default;
 TextureResourceAllocator::Resource TextureResourceAllocator::Create(
     const D3D12_RESOURCE_DESC& desc, D3D12_RESOURCE_STATES initial_state,
     const D3D12_CLEAR_VALUE* clear_value) {
+    const unsigned av_probe = g_xbox_resource_probe_sequence.fetch_add(1, std::memory_order_relaxed);
+    const bool av_probe_log = av_probe < 128;
+    if (av_probe_log) {
+        LOG_WARNING(Render, "D3D12 AV-PROBE RESOURCE #{} BEGIN GetResourceAllocationInfo format={} "
+                    "dimension={} width={} height={} depth={} mip={} flags={} state={}",
+                    av_probe, static_cast<u32>(desc.Format), static_cast<u32>(desc.Dimension),
+                    desc.Width, desc.Height, desc.DepthOrArraySize, desc.MipLevels,
+                    static_cast<u32>(desc.Flags), static_cast<u32>(initial_state));
+    }
     const D3D12_RESOURCE_ALLOCATION_INFO info = device.Get()->GetResourceAllocationInfo(0, 1, &desc);
+    if (av_probe_log) {
+        LOG_WARNING(Render, "D3D12 AV-PROBE RESOURCE #{} END GetResourceAllocationInfo bytes={} "
+                    "alignment={}", av_probe, info.SizeInBytes, info.Alignment);
+    }
     if (info.SizeInBytes == UINT64_MAX || info.Alignment == 0) {
         return {};
     }
@@ -146,7 +162,15 @@ TextureResourceAllocator::Resource TextureResourceAllocator::Create(
                 .Flags = FlagsOf(heap_class),
             };
             State::Block block{.heap_class = heap_class, .size = wanted};
+            if (av_probe_log) {
+                LOG_WARNING(Render, "D3D12 AV-PROBE RESOURCE #{} BEGIN CreateHeap bytes={} class={}",
+                            av_probe, wanted, static_cast<u32>(heap_class));
+            }
             const HRESULT heap_hr = device.Get()->CreateHeap(&heap_desc, IID_PPV_ARGS(&block.heap));
+            if (av_probe_log) {
+                LOG_WARNING(Render, "D3D12 AV-PROBE RESOURCE #{} END CreateHeap hr=0x{:08x}",
+                            av_probe, static_cast<u32>(heap_hr));
+            }
             if (SUCCEEDED(heap_hr)) {
                 block.free_ranges.emplace(0, wanted);
                 block.charge = Common::MemoryCharge(Common::MemoryAccount::TextureHeaps, wanted);
@@ -196,9 +220,18 @@ TextureResourceAllocator::Resource TextureResourceAllocator::Create(
 
     Resource result;
     if (selected != SIZE_MAX) {
+        if (av_probe_log) {
+            LOG_WARNING(Render, "D3D12 AV-PROBE RESOURCE #{} BEGIN CreatePlacedResource offset={} "
+                        "bytes={}", av_probe, selected_offset, info.SizeInBytes);
+        }
         const HRESULT placed_hr = device.Get()->CreatePlacedResource(
             state->blocks[selected].heap.Get(), selected_offset, &desc, initial_state, clear_value,
             IID_PPV_ARGS(&result.resource));
+        if (av_probe_log) {
+            LOG_WARNING(Render, "D3D12 AV-PROBE RESOURCE #{} END CreatePlacedResource hr=0x{:08x} "
+                        "resource={}", av_probe, static_cast<u32>(placed_hr),
+                        static_cast<void*>(result.resource.Get()));
+        }
         if (SUCCEEDED(placed_hr)) {
             result.allocation = std::make_shared<Allocation>();
             result.allocation->state = state;
@@ -221,7 +254,15 @@ TextureResourceAllocator::Resource TextureResourceAllocator::Create(
                                                       initial_state, clear_value,
                                                       IID_PPV_ARGS(&result.resource));
     };
+    if (av_probe_log) {
+        LOG_WARNING(Render, "D3D12 AV-PROBE RESOURCE #{} BEGIN CreateCommittedResource", av_probe);
+    }
     HRESULT hr = create_committed();
+    if (av_probe_log) {
+        LOG_WARNING(Render, "D3D12 AV-PROBE RESOURCE #{} END CreateCommittedResource hr=0x{:08x} "
+                    "resource={}", av_probe, static_cast<u32>(hr),
+                    static_cast<void*>(result.resource.Get()));
+    }
     if (hr == E_OUTOFMEMORY && scheduler.IsRecordingThread()) {
         // The commit limit refused it. Return what submitted work no longer needs (deferred
         // releases, then heaps they emptied) and try once more. Waiting only on submitted ticks

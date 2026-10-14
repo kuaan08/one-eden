@@ -21,6 +21,28 @@ namespace D3D12 {
 
 using namespace TextureDetail;
 
+// Xbox One hardware crash tracking: first driver descriptor calls only.
+// A fault in umd12ddi.dll can terminate the UWP before the normal renderer
+// exception handler runs. BEGIN/END pairs identify the exact D3D12 call.
+namespace {
+std::atomic_uint g_xbox_view_probe_sequence{0};
+template <typename F>
+void ProbeDescriptorCall(const char* operation, ID3D12Resource* resource, DXGI_FORMAT format,
+                         u32 dimension, F&& callback) {
+    const unsigned seq = g_xbox_view_probe_sequence.fetch_add(1, std::memory_order_relaxed);
+    const bool track = seq < 128;
+    if (track) {
+        LOG_WARNING(Render, "D3D12 AV-PROBE VIEW #{} BEGIN {} resource={} format={} dimension={}",
+                    seq, operation, static_cast<void*>(resource), static_cast<u32>(format),
+                    dimension);
+    }
+    std::forward<F>(callback)();
+    if (track) {
+        LOG_WARNING(Render, "D3D12 AV-PROBE VIEW #{} END {}", seq, operation);
+    }
+}
+} // namespace
+
 ImageView::ImageView(TextureCacheRuntime& runtime_, const VideoCommon::ImageViewInfo& info,
                      ImageId image_id_, Image& source)
     : VideoCommon::ImageViewBase{info, source.info, image_id_, source.gpu_addr}, runtime{&runtime_},
@@ -191,8 +213,11 @@ ImageView::ImageView(TextureCacheRuntime& runtime_, const VideoCommon::ImageView
                 rtv_desc.Texture2DArray = {base_level, base_layer, layers, 0};
             }
             rtv_on_copy = view_on_copy;
-            runtime->device.Get()->CreateRenderTargetView(view_on_copy ? srv_resource : image,
-                                                          &rtv_desc, rtv);
+            ProbeDescriptorCall("CreateRenderTargetView", view_on_copy ? srv_resource : image,
+                rtv_desc.Format, static_cast<u32>(rtv_desc.ViewDimension), [&] {
+                    runtime->device.Get()->CreateRenderTargetView(
+                        view_on_copy ? srv_resource : image, &rtv_desc, rtv);
+                });
             CheckRemovedAfterDescriptor(runtime->device.Get(), [&] {
                 return fmt::format("RTV of {} (format {} dim {} level {} layers {}+{})",
                                    info.format, static_cast<u32>(rtv_desc.Format),
@@ -218,14 +243,21 @@ ImageView::ImageView(TextureCacheRuntime& runtime_, const VideoCommon::ImageView
             dsv_desc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2DARRAY;
             dsv_desc.Texture2DArray = {base_level, base_layer, layers};
         }
-        runtime->device.Get()->CreateDepthStencilView(image, &dsv_desc, dsv);
+        ProbeDescriptorCall("CreateDepthStencilView", image, dsv_desc.Format,
+                             static_cast<u32>(dsv_desc.ViewDimension), [&] {
+                                 runtime->device.Get()->CreateDepthStencilView(image, &dsv_desc, dsv);
+                             });
         // For draws that also sample this image: D3D12 cannot read a resource in DEPTH_WRITE.
         dsv_read_only = runtime->dsv_descriptors.Allocate();
         dsv_desc.Flags = D3D12_DSV_FLAG_READ_ONLY_DEPTH;
         if (format_info.stencil_srv != DXGI_FORMAT_UNKNOWN) {
             dsv_desc.Flags |= D3D12_DSV_FLAG_READ_ONLY_STENCIL;
         }
-        runtime->device.Get()->CreateDepthStencilView(image, &dsv_desc, dsv_read_only);
+        ProbeDescriptorCall("CreateDepthStencilViewReadonly", image, dsv_desc.Format,
+                             static_cast<u32>(dsv_desc.ViewDimension), [&] {
+                                 runtime->device.Get()->CreateDepthStencilView(image, &dsv_desc,
+                                                                                dsv_read_only);
+                             });
         CheckRemovedAfterDescriptor(runtime->device.Get(), [&] {
             return fmt::format("DSV of {} (format {} dim {} level {} layers {}+{})", info.format,
                                static_cast<u32>(dsv_desc.Format),
@@ -252,7 +284,11 @@ ImageView::ImageView(TextureCacheRuntime& runtime_, const VideoCommon::ImageView
             uav_desc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2DARRAY;
             uav_desc.Texture2DArray = {base_level, base_layer, layers, 0};
         }
-        runtime->device.Get()->CreateUnorderedAccessView(image, nullptr, &uav_desc, uav);
+        ProbeDescriptorCall("CreateUnorderedAccessView", image, uav_desc.Format,
+                             static_cast<u32>(uav_desc.ViewDimension), [&] {
+                                 runtime->device.Get()->CreateUnorderedAccessView(image, nullptr,
+                                                                                   &uav_desc, uav);
+                             });
         CheckRemovedAfterDescriptor(runtime->device.Get(), [&] {
             return fmt::format("UAV of {} (format {} dim {} level {} layers {}+{})", info.format,
                                static_cast<u32>(uav_desc.Format),
@@ -281,7 +317,11 @@ ImageView::ImageView(TextureCacheRuntime& runtime_, const VideoCommon::NullImage
         .ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D,
         .Texture2D = {.MipSlice = 0, .PlaneSlice = 0},
     };
-    runtime->device.Get()->CreateUnorderedAccessView(nullptr, nullptr, &uav_desc, uav);
+    ProbeDescriptorCall("CreateNullUnorderedAccessView", nullptr, uav_desc.Format,
+                         static_cast<u32>(uav_desc.ViewDimension), [&] {
+                             runtime->device.Get()->CreateUnorderedAccessView(nullptr, nullptr,
+                                                                               &uav_desc, uav);
+                         });
 }
 ImageView::~ImageView() { Release(); }
 
@@ -363,7 +403,10 @@ D3D12_CPU_DESCRIPTOR_HANDLE ImageView::CreateSrv(Shader::TextureType texture_typ
                                                  .Shader4ComponentMapping = p.mapping};
             desc.Texture2DArray = {p.base_level, p.levels, 0, depth, 0, 0.0f};
             const D3D12_CPU_DESCRIPTOR_HANDLE handle = runtime->view_descriptors.Allocate();
-            runtime->device.Get()->CreateShaderResourceView(slices, &desc, handle);
+            ProbeDescriptorCall("CreateSliceShaderResourceView", slices, desc.Format,
+                static_cast<u32>(desc.ViewDimension), [&] {
+                    runtime->device.Get()->CreateShaderResourceView(slices, &desc, handle);
+                });
             CheckRemovedAfterDescriptor(runtime->device.Get(), [&] {
                 return fmt::format("slice array SRV of {} (format {} levels {}+{} of {}, "
                                    "slices {}, resource format {})",
@@ -470,7 +513,10 @@ D3D12_CPU_DESCRIPTOR_HANDLE ImageView::CreateSrv(Shader::TextureType texture_typ
                            static_cast<u32>(texture_type));
     });
     const D3D12_CPU_DESCRIPTOR_HANDLE handle = runtime->view_descriptors.Allocate();
-    runtime->device.Get()->CreateShaderResourceView(resource, &desc, handle);
+    ProbeDescriptorCall("CreateShaderResourceView", resource, desc.Format,
+                             static_cast<u32>(desc.ViewDimension), [&] {
+                                 runtime->device.Get()->CreateShaderResourceView(resource, &desc, handle);
+                             });
     CheckRemovedAfterDescriptor(runtime->device.Get(), [&] {
         return fmt::format("SRV of {} as type {} (format {} dim {} levels {}+{} layers {}+{} of "
                            "{}, resource dim {} msaa {})",
