@@ -1,0 +1,84 @@
+name: Import complete Xbox One Eden source
+on:
+  push:
+    branches: [main]
+    paths: [".github/workflows/import-xbox-one-source.yml"]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - name: Checkout new README
+        uses: actions/checkout@v4
+        with:
+          path: destination
+          persist-credentials: false
+      - name: Checkout modified emulator source
+        uses: actions/checkout@v4
+        with:
+          repository: kuaan08/Switch
+          ref: 5a225c47843616a10fd1158f4d485f2ad8e7283c
+          path: source
+          persist-credentials: false
+      - name: Apply Xbox One README and adapt build workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp destination/README.md source/README.md
+          python3 - <<'PY'
+          from pathlib import Path
+          root = Path("source")
+          assert (root / "src/eden_uwp/uwp_boot.cpp").is_file()
+          shader = root / "src/video_core/renderer_d3d12/d3d12_shader_compiler.cpp"
+          assert shader.is_file() and "CompilerHLSL" in shader.read_text()
+          assert (root / "tools/xbox/package-appx.ps1").is_file()
+          readme = (root / "README.md").read_text()
+          assert "Xbox One Fat" in readme and "kuaan08/one-eden" in readme
+          assert not any(s in readme for s in ["Xbox Series", "Series X", "Series S"])
+          for path in (root / ".github/workflows").glob("*.yml"):
+              content = path.read_text().replace("feature/xbox-one-fat-eden-source", "main")
+              if path.name == "xbox-one-uwp.yml":
+                  marker = "          run-id: 38597070329\n"
+                  assert marker in content
+                  content = content.replace(marker, marker + "          repository: kuaan08/Switch\n")
+                  content = content.replace("name: Xbox One Fat - UWP x64 build attempt",
+                                            "name: Xbox One Fat - Complete UWP and SM5.1 APPX")
+              else:
+                  before, sep, after = content.partition("\npermissions:")
+                  assert sep and "\non:" in before
+                  before = before[:before.index("\non:")] + "\non:\n  workflow_dispatch:\n"
+                  content = before + sep + after
+                  marker = "          run-id: 38510035231\n"
+                  if marker in content:
+                      content = content.replace(marker, marker + "          repository: kuaan08/Switch\n")
+              path.write_text(content)
+          (root / "docs/xbox/one-eden-migration.md").write_text(
+              "# Eden Xbox One repository migration\n\n"
+              "Complete source imported from kuaan08/Switch at commit "
+              "5a225c47843616a10fd1158f4d485f2ad8e7283c. "
+              "The original source remains intact as backup. "
+              "Use this repository main for new development.\n")
+          print("Full source and README checks passed")
+          PY
+      - name: Commit source and README
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C source config user.name "github-actions[bot]"
+          git -C source config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C source add -A
+          git -C source commit -m "port: migrate entire Xbox One UWP emulator source"
+          echo "Tracked files: $(git -C source ls-files | wc -l)"
+      - name: Push complete source to one-eden main
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          expected="$(git -C destination rev-parse HEAD)"
+          remote="https://x-access-token:${GH_TOKEN}@github.com/kuaan08/one-eden.git"
+          git -C source push --force-with-lease="refs/heads/main:${expected}" "$remote" HEAD:refs/heads/main
+          echo "Complete source now on one-eden/main"
