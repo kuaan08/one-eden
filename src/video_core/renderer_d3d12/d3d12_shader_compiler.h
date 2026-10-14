@@ -42,6 +42,13 @@ public:
         return available;
     }
 
+    /// The original Xbox One hardware reports Shader Model 5.1 and uses the
+    /// experimental SPIRV-Cross HLSL -> DXBC path. Presentation needs to
+    /// correct its guest Y orientation without flipping the frontend overlay.
+    bool IsSm5Active() const {
+        return sm5_active;
+    }
+
     /// Whether the DLL links pipeline stages (eden_spirv_to_dxil_pipeline). Without it,
     /// CompilePipeline() translates each stage alone and the signatures may not match.
     bool CanLinkStages() const {

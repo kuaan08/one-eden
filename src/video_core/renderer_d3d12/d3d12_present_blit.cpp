@@ -14,6 +14,7 @@
 #include "video_core/host_shaders/blit_color_float_frag_spv.h"
 #include "video_core/host_shaders/full_screen_triangle_vert_spv.h"
 #include "video_core/renderer_d3d12/d3d12_resource_utils.h"
+#include "video_core/renderer_d3d12/d3d12_present_orientation.h"
 #include "video_core/renderer_d3d12/renderer_d3d12.h"
 
 // Presentation of the guest image: a full-screen bilinear blit into the back buffer, or FSR 1
@@ -136,13 +137,26 @@ bool RendererD3D12::CompositeAccelerated(const Tegra::FramebufferConfig& framebu
         }
         return false;
     }
-    // Same crop and flips as the Vulkan presenter (Tegra::NormalizeCrop).
+    // Keep the guest's crop and any game-provided flips from NormalizeCrop.
+    // On Xbox One the HLSL SM5.1 translator currently omits the Vulkan-to-D3D
+    // guest Y conversion applied by the Mesa DXIL backend. The game image is
+    // upside down while the Direct2D/overlay UI remains upright. Swap the
+    // accelerated GPU image's crop Y endpoints here, *before* scaling and
+    // *before* the overlay is drawn. This works with both bilinear and FSR
+    // (its EASU plan supports a signed crop height). Do not flip the CPU path,
+    // which has already transformed its buffer in CopyGuestImage.
+    const auto crop = CorrectXboxOneGuestCrop(
+        Tegra::NormalizeCrop(framebuffer, texture->width, texture->height),
+        shader_compiler.IsSm5Active());
     RecordComposite(frame, {.srv = texture->srv,
                             .width = texture->width,
                             .height = texture->height,
-                            .crop = Tegra::NormalizeCrop(framebuffer, texture->width,
-                                                         texture->height)});
+                            .crop = crop});
     if (!logged_accelerated) {
+        if (shader_compiler.IsSm5Active()) {
+            LOG_INFO(Render, "D3D12 SM5.1: Xbox One guest image vertical orientation correction "
+                             "ACTIVE at GPU composite (FPS overlay and menus unchanged, FSR aware)");
+        }
         LOG_INFO(Render, "D3D12: presenting the GPU-rendered guest image ({}x{} image, {}x{} "
                  "framebuffer)", texture->width, texture->height, framebuffer.width,
                  framebuffer.height);
