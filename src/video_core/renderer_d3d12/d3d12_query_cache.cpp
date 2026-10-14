@@ -1,0 +1,185 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#include <cstddef>
+#include <cstring>
+
+#include "common/logging.h"
+
+#include "video_core/renderer_d3d12/d3d12_query_cache.h"
+#include "video_core/renderer_d3d12/d3d12_rasterizer.h"
+#include "video_core/renderer_d3d12/d3d12_resource_utils.h"
+#include "video_core/renderer_d3d12/d3d12_scheduler.h"
+
+namespace D3D12 {
+namespace {
+
+struct QueryInfo {
+    D3D12_QUERY_HEAP_TYPE heap;
+    D3D12_QUERY_TYPE query;
+    u64 bytes;        ///< what ResolveQueryData writes
+    u64 value_offset; ///< where the guest's count is in it
+};
+
+QueryInfo GetQueryInfo(VideoCore::QueryType type) {
+    switch (type) {
+    case VideoCore::QueryType::SamplesPassed:
+        return {D3D12_QUERY_HEAP_TYPE_OCCLUSION, D3D12_QUERY_TYPE_OCCLUSION, sizeof(u64), 0};
+    case VideoCore::QueryType::PrimitivesGenerated:
+        return {D3D12_QUERY_HEAP_TYPE_PIPELINE_STATISTICS, D3D12_QUERY_TYPE_PIPELINE_STATISTICS,
+                sizeof(D3D12_QUERY_DATA_PIPELINE_STATISTICS),
+                offsetof(D3D12_QUERY_DATA_PIPELINE_STATISTICS, CPrimitives)};
+    case VideoCore::QueryType::TfbPrimitivesWritten:
+        return {D3D12_QUERY_HEAP_TYPE_SO_STATISTICS, D3D12_QUERY_TYPE_SO_STATISTICS_STREAM0,
+                sizeof(D3D12_QUERY_DATA_SO_STATISTICS),
+                offsetof(D3D12_QUERY_DATA_SO_STATISTICS, NumPrimitivesWritten)};
+    default:
+        UNREACHABLE();
+    }
+}
+
+} // namespace
+
+QueryPool::QueryPool(const Device& device_, Scheduler& scheduler_)
+    : device{device_}, scheduler{scheduler_} {}
+
+QueryPool::Slot QueryPool::Reserve(VideoCore::QueryType type) {
+    std::scoped_lock lock{mutex};
+    TypePool& pool = pools[static_cast<size_t>(type)];
+    if (pool.free.empty() || !scheduler.IsFree(pool.free.front().tick)) {
+        AddPage(type);
+    }
+    const Slot slot = pool.free.front().slot;
+    pool.free.pop_front();
+    return slot;
+}
+
+void QueryPool::Release(VideoCore::QueryType type, const Slot& slot, u64 tick) {
+    std::scoped_lock lock{mutex};
+    pools[static_cast<size_t>(type)].free.push_back({slot, tick});
+}
+
+void QueryPool::AddPage(VideoCore::QueryType type) {
+    const QueryInfo info = GetQueryInfo(type);
+    Page page;
+    const D3D12_QUERY_HEAP_DESC heap_desc{.Type = info.heap, .Count = PAGE_SIZE, .NodeMask = 0};
+    ThrowIfFailed(device.Get()->CreateQueryHeap(&heap_desc, IID_PPV_ARGS(&page.heap)),
+                  "CreateQueryHeap");
+    page.readback = CreateCommittedBuffer(device.Get(), info.bytes * PAGE_SIZE,
+                                          D3D12_HEAP_TYPE_READBACK,
+                                          D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_FLAG_NONE,
+                                          "CreateCommittedResource (query readback)");
+    // New slots go first: the free list's front was not free yet.
+    TypePool& pool = pools[static_cast<size_t>(type)];
+    for (u32 i = PAGE_SIZE; i-- > 0;) {
+        pool.free.push_front({Slot{page.heap.Get(), page.readback.Get(), i, info.bytes * i}, 0});
+    }
+    pool.pages.push_back(std::move(page));
+    LOG_DEBUG(Render, "D3D12: query page {} created (type {})", pool.pages.size(),
+              static_cast<u32>(type));
+}
+
+QueryCache::QueryCache(RasterizerD3D12& rasterizer_,
+                       Tegra::MaxwellDeviceMemoryManager& device_memory_, const Device& device_,
+                       Scheduler& scheduler_)
+    : QueryCacheLegacy{rasterizer_, device_memory_}, rasterizer{rasterizer_}, device{device_},
+      scheduler{scheduler_}, pool{std::make_shared<QueryPool>(device_, scheduler_)} {
+    EnableCounters();
+    scheduler.RegisterOnSubmit([this] { DisableStreams(); });
+    scheduler.RegisterOnReset([this] { EnableCounters(); });
+}
+
+QueryCache::~QueryCache() {
+    try {
+        if (SUCCEEDED(device.Get()->GetDeviceRemovedReason())) DisableStreams();
+    } catch (const std::exception& e) {
+        LOG_ERROR(Render, "Query teardown: {}", e.what());
+    }
+    scheduler.ClearSubmissionCallbacks();
+    scheduler.DrainForShutdown();
+}
+
+bool QueryCache::AnyCommandQueued() const noexcept {
+    return rasterizer.AnyCommandQueued();
+}
+
+std::optional<PendingReport> QueryCache::PeekReport(VAddr addr) {
+    return VisitQuery(addr, [](CachedQuery* query) -> std::optional<PendingReport> {
+        if (!query) {
+            return std::nullopt;
+        }
+        // The value is the counter's slice plus every slice it continues from (HostCounterBase).
+        PendingReport report;
+        for (std::shared_ptr<HostCounter> counter = query->GetCounter(); counter;) {
+            if (const std::optional<u64>& value = counter->KnownResult()) {
+                report.known += *value;
+                break;
+            }
+            if (report.num_slices == PendingReport::MAX_SLICES || !counter->Ended()) {
+                report.complete = false;
+                break;
+            }
+            report.known += counter->BaseResult();
+            std::shared_ptr<HostCounter> next = counter->Dependency();
+            report.slices[report.num_slices++] = std::move(counter);
+            counter = std::move(next);
+        }
+        return report;
+    });
+}
+
+HostCounter::HostCounter(QueryCache& cache_, std::shared_ptr<HostCounter> dependency_,
+                         VideoCore::QueryType type_)
+    : HostCounterBase{std::move(dependency_)}, cache{cache_}, type{type_},
+      query_type{GetQueryInfo(type_).query}, pool{cache_.GetPool()}, slot{pool->Reserve(type_)} {
+    cache.GetScheduler().CommandList()->BeginQuery(slot.heap, query_type, slot.index);
+}
+
+HostCounter::~HostCounter() {
+    // An open query cannot begin again; the streams end every counter before dropping it, so
+    // an unended slot is only left behind at teardown.
+    if (ended) {
+        pool->Release(type, slot, tick);
+    }
+}
+
+void HostCounter::EndQuery() {
+    if (ended) {
+        return;
+    }
+    auto* list = cache.GetScheduler().CommandList();
+    list->EndQuery(slot.heap, query_type, slot.index);
+    list->ResolveQueryData(slot.heap, query_type, slot.index, 1, slot.readback, slot.offset);
+    tick = cache.GetScheduler().CurrentTick();
+    ended = true;
+}
+
+u64 HostCounter::ResolvedBytes() const noexcept {
+    return GetQueryInfo(type).bytes;
+}
+
+u64 HostCounter::ValueOffset() const noexcept {
+    return GetQueryInfo(type).value_offset;
+}
+
+u64 HostCounter::BlockingQuery([[maybe_unused]] bool async) const {
+    if (!ended) {
+        const_cast<HostCounter*>(this)->EndQuery();
+    }
+    cache.GetScheduler().Wait(tick);
+    void* mapped_page{};
+    const D3D12_RANGE read_range{static_cast<SIZE_T>(slot.offset),
+                                 static_cast<SIZE_T>(slot.offset + GetQueryInfo(type).bytes)};
+    ThrowIfFailed(slot.readback->Map(0, &read_range, &mapped_page), "Map (query readback)");
+    const u8* const mapped = static_cast<const u8*>(mapped_page) + slot.offset;
+    u64 value{};
+    std::memcpy(&value, mapped + ValueOffset(), sizeof(value));
+    const D3D12_RANGE written_range{0, 0};
+    slot.readback->Unmap(0, &written_range);
+    return value;
+}
+
+CachedQuery::CachedQuery(QueryCache&, VideoCore::QueryType, VAddr cpu_addr, u8* host_ptr)
+    : CachedQueryBase{cpu_addr, host_ptr} {}
+
+} // namespace D3D12

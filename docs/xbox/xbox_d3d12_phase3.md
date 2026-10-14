@@ -1,0 +1,453 @@
+# Fase 3: infraestructura del rasterizador D3D12
+
+Documento de diseño interno (ver también [`xbox_internal.md`](xbox_internal.md)). Explica **qué**
+construimos, **por qué así** y **de dónde** sale cada decisión. Se actualiza conforme avanzamos.
+
+## Objetivo
+
+Hoy el trabajo de GPU del guest (draws, clears, copias) termina en `Null::RasterizerNull`. La Fase 3
+construye las piezas sobre las que el rasterizador D3D12 va a ejecutar ese trabajo, siguiendo el
+mismo reparto que el backend Vulkan de Eden:
+
+- Eden aporta las **cachés genéricas** (`VideoCommon::BufferCache<P>`, `TextureCache<P>`,
+  `FenceManager<P>` y `QueryCacheLegacy`). Ya resuelven qué memoria del guest corresponde a qué
+  recurso, cuándo invalidar y cuándo descargar.
+- El backend aporta los **runtimes**: crear recursos, copiar, subir y descargar, sincronizar.
+
+En esta fase **no se dibuja geometría del guest**, porque los pipelines llegan en la Fase 4. Aquí basta
+con que los recursos se creen, se suban, se copien y se sincronicen bien.
+
+## Sub-fases
+
+| # | Pieza | Archivo(s) | Gate |
+|---|---|---|---|
+| 3a.1 | Scheduler | `d3d12_scheduler` | El present usa command lists y ticks; se ve igual y no hay errores de Render. **Pasa en PC y Series (0.2.8.0).** |
+| 3a.2 | Staging pool | `d3d12_staging_buffer_pool` | El frame azul usa un buffer dedicado y el patrón usa el stream; ambos se ven bien y aparecen los dos marcadores en el log. **Pasa en PC; logs de Series correctos en 0.2.9.0, confirmación visual pendiente.** |
+| 3a.3 | Descriptor heaps | `d3d12_descriptor_heap` | El blit usa los heaps offline, el anillo shader-visible y la deduplicación de samplers. **Pasa en PC; logs correctos en Series 0.2.10.0, confirmación visual pendiente.** |
+| 3b | Buffer cache runtime | `d3d12_buffer_cache` | Las copias, subidas y descargas funcionan. **Pasa en PC y Series (0.2.11.0) con round-trip GPU de 4096 bytes.** |
+| 3c | Texture cache runtime | `d3d12_texture_cache` | Image, ImageView, Sampler y Framebuffer; upload/download con footprints D3D12. **Pasa en PC y Series (0.2.12.0) con round-trip 13×7 RGBA8.** |
+| 3d | Fences, queries y `RasterizerD3D12` | `d3d12_fence_manager`, `d3d12_query_cache`, `d3d12_rasterizer` | El rasterizador real sustituye al nulo y el homebrew termina (`RunHeadlessBoot returned 0`). **Pasa en PC y Series (0.2.13.0) tras la revisión de la fase.** |
+
+---
+
+## 3a.1 Scheduler: command lists y ticks
+
+**Modelo (el de Vulkan en Eden):** un contador monotónico, el *tick*.
+- `CurrentTick()` es el valor que se señalará cuando se envíe la command list que se está grabando
+  ahora.
+- `IsFree(t)` dice si la GPU ya pasó `t`, comparando con `fence->GetCompletedValue()`.
+- `Wait(t)` bloquea hasta ese punto. Si `t` es el tick actual, primero hace flush.
+- `Flush()`, en orden:
+  1. `Close()` de la lista.
+  2. `ExecuteCommandLists`.
+  3. `Signal(fence, tick)` y `tick++`.
+  4. Toma un allocator libre y hace `Reset` de la lista.
+
+Todo el resto (staging, descriptores y destrucción diferida) se sincroniza con ticks. No hay fences
+por recurso.
+
+**Por qué así:**
+- Un `ID3D12CommandAllocator` no se puede resetear mientras la GPU ejecuta lo que se grabó con él
+  ([MS: fence-based resource management](https://learn.microsoft.com/en-us/windows/win32/direct3d12/fence-based-resource-management)).
+  Por eso los allocators van en un **pool**: cada uno lleva el tick en que se usó y se reutiliza
+  cuando `IsFree(tick)`.
+- Dolphin (su backend D3D12) usa lo mismo: un anillo de `CommandListResources`, cada una con su
+  allocator y su fence value, y una cola de recursos pendientes de destruir por lista
+  ([DX12Context.cpp](https://github.com/dolphin-emu/dolphin/blob/master/Source/Core/VideoBackends/D3D12/DX12Context.cpp)).
+  vkd3d-proton recicla pools de comandos por la misma razón
+  ([commit](https://github.com/HansKristian-Work/vkd3d-proton/commit/54fbadcc9405841cc018210ba6d1045e71f405c0)).
+- **Destrucción diferida:** el scheduler guarda `ComPtr` con el tick en que se liberaron y los
+  suelta cuando `IsFree`. Las cachés genéricas ya retrasan borrados varios frames, pero esta es la
+  red de seguridad real: la GPU nunca ve un recurso muerto.
+- **Sin hilo worker (por ahora):** Vulkan graba en otro hilo (`CommandChunk`). En D3D12 grabar es
+  barato y el hilo de GPU de Eden ya está separado del de CPU. Si el profiling lo pide, se añade
+  después sin cambiar la interfaz.
+
+**Fence propia:** el scheduler tiene su propia `ID3D12Fence` (la *master fence*). `Device` conserva
+la suya solo para `WaitIdle()`. Dos fences en la misma cola no se estorban.
+
+## 3a.2 Staging: stream buffer y buffers dedicados
+
+Es una traducción directa de `vk_staging_buffer_pool`.
+- **Stream buffer:**
+  - Un buffer de 128 MiB en heap `UPLOAD`, mapeado de forma persistente y dividido en 16 regiones.
+  - Cada región guarda el tick de su último uso.
+  - Si la región siguiente sigue ocupada por la GPU, se usa un buffer dedicado en lugar de esperar.
+- **Buffers dedicados:** se agrupan por potencia de dos (`log2`) y por uso (`Upload`, `Download`).
+  - Se reutilizan cuando su tick está libre.
+  - `deferred` (para descargas asíncronas) bloquea el buffer hasta `FreeDeferred`.
+  - `TickFrame` recorre un nivel por frame y borra los que no se usan.
+
+**Por qué así:**
+- Es el patrón recomendado: un anillo en el upload heap con una cola de (tick, offset); se espera o
+  se busca otro buffer solo si falta espacio
+  ([MS](https://learn.microsoft.com/en-us/windows/win32/direct3d12/fence-based-resource-management),
+  [Diligent](https://diligentgraphics.com/2016/04/20/implementing-dynamic-resources-with-direct3d12/)).
+- **Mapear para siempre es legal en D3D12** mientras la CPU no escriba lo que la GPU está leyendo.
+  Justamente eso es lo que garantizan los ticks.
+- **Estados:**
+  - Un recurso en heap `UPLOAD` nace en `GENERIC_READ` y **no puede cambiar de estado**.
+  - Uno en heap `READBACK` nace en `COPY_DEST` y tampoco cambia.
+  - Por eso el staging nunca necesita barreras
+    ([MS: resource barriers](https://learn.microsoft.com/en-us/windows/win32/direct3d12/using-resource-barriers-to-synchronize-resource-states-in-direct3d-12)).
+- **Alineación:**
+  - Las copias buffer→textura exigen offset alineado a 512 B y row pitch a 256 B.
+  - Los CBV exigen 256 B.
+  - Alineamos todo el stream buffer a 512 B.
+
+**UMA (Xbox Series):** el probe dice `UMA yes, cache-coherent UMA yes`. Con UMA se podrían evitar copias
+usando heaps `CUSTOM` (`WRITE_BACK`, `L0`) o `WriteToSubresource`
+([MS: UMA optimizations](https://learn.microsoft.com/en-us/windows/win32/direct3d12/default-texture-mapping)).
+Lo dejamos como optimización **medida** para después. El documento de Microsoft advierte que no se
+debe dar acceso de CPU a todo sin medir, porque puede empeorar el acceso de la GPU.
+
+### 3a.2: implementación y gate
+
+- El stream es un recurso `UPLOAD` persistente de 128 MiB, dividido en 16 regiones de 8 MiB. Cada
+  petición queda alineada a 512 bytes y marca inmediatamente con `CurrentTick()` todas las regiones
+  que toca. Mientras el cursor avanza no puede solapar asignaciones anteriores y no necesita
+  consultar las fences. Al envolver, solo se reutiliza una región si su submission anterior ya
+  terminó; si no, se obtiene un buffer dedicado en vez de bloquear el hilo de CPU.
+- Varias asignaciones no solapadas de la command list actual pueden compartir una región. El cursor
+  garantiza que no se pisan y todas quedan retiradas por el mismo tick.
+- Las peticiones grandes, las descargas y las peticiones `deferred` usan recursos dedicados cuyo
+  tamaño es la siguiente potencia de dos. Se separan en cachés `UPLOAD` y `READBACK` y solo se
+  reutilizan cuando el scheduler confirma su tick. `FreeDeferred` transfiere explícitamente una
+  petición diferida al tick de la lista que contiene su último uso.
+- `Map` recibe `{0, 0}` para los recursos `UPLOAD`, indicando que la CPU no leerá memoria
+  write-combined. Los recursos `READBACK` se mapean para lectura y el llamador debe esperar su tick
+  antes de consultar el span.
+- Se rechazan peticiones vacías o imposibles de representar en los buckets, evitando `log2(0)`,
+  índices fuera del array y desplazamientos de 64 bits inválidos.
+
+El gate fuerza el frame azul inicial por un buffer dedicado y lo libera contra el tick de esa
+submission. Los frames 1280×720 del patrón usan el stream. El log debe contener:
+
+```
+D3D12: staging stream ready (128 MiB, 16 regions of 8 MiB)
+D3D12: created dedicated staging upload buffer (...)
+D3D12: staging stream path active (...)
+```
+
+La cuenta correcta para el upload de 1920×1080 es 8.294.400 bytes con row pitch 7680: sí cabe en
+una región de 8 MiB (8.388.608 bytes). Por eso no sirve por sí solo para forzar la ruta dedicada.
+
+La prueba local usa una ventana 2048×1536: registró un dedicado de 16.777.216 bytes para la petición
+inicial de 12.582.912 bytes y luego el stream con peticiones de 3.686.400 bytes. Terminó con
+`RunHeadlessBoot returned 0`, sin warnings ni errores de Render. Una primera versión consultaba las
+regiones activas en cada asignación; eso confundía compartir una región con solapar memoria y creó
+dedicados de 4 MiB innecesarios. Solo hay riesgo de solapamiento al envolver el cursor, así que la
+consulta de fences quedó limitada a ese caso.
+
+En la Series, la versión 0.2.9.0 registró un dedicado de 8.388.608 bytes para el frame inicial de
+8.294.400 bytes y el stream para el patrón con peticiones de 3.686.400 bytes. El boot terminó en
+10,875 s con retorno 0, sin warnings/errores de Render, device removal ni fallback por CPU. Queda
+pendiente la confirmación visual del usuario.
+
+## 3a.3 Descriptores
+
+Hay dos tipos de heap:
+- **Heaps "offline" (sin shader-visible):**
+  - Uno por tipo: CBV_SRV_UAV, SAMPLER, RTV y DSV.
+  - Guardan las vistas persistentes (SRV y UAV de cada ImageView, RTV y DSV de cada attachment).
+  - El allocator trabaja por páginas de 1024 descriptores con free-list, así que las vistas se
+    pueden crear y destruir sin límite práctico.
+- **Heap shader-visible CBV_SRV_UAV como anillo:**
+  - Por cada draw o dispatch se reserva un rango contiguo del anillo y se copia allí con
+    `CopyDescriptorsSimple` desde los heaps offline.
+  - Cada bloque del anillo lleva el tick en que se usó. Si el anillo se llena, se hace flush y se
+    espera al bloque más antiguo.
+
+**Por qué así:**
+- Es el patrón estándar de "offline heaps + copia a online heap" por draw
+  ([GameDev.net: descriptor heap strategies](https://gamedev.net/forums/topic/686440-d3d12-descriptor-heap-strategies/)).
+- El **origen** de `CopyDescriptors` **debe** ser un heap no shader-visible: los shader-visible
+  pueden vivir en memoria write-combined o de GPU, y leerlos es lentísimo
+  ([MS: CopyDescriptorsSimple](https://learn.microsoft.com/en-us/windows/win32/api/d3d12/nf-d3d12-id3d12device-copydescriptorssimple)).
+- `SetDescriptorHeaps` es caro en algunas GPUs. Por eso hay **un solo** heap CBV_SRV_UAV y **un
+  solo** heap de samplers durante toda la vida de la app; nunca se cambian a mitad de una lista.
+
+**Samplers (límite de 2048):**
+- Un heap de samplers shader-visible tiene como máximo **2048** entradas. Es un límite fijo en todos
+  los tiers ([MS: hardware tiers](https://learn.microsoft.com/en-us/windows/win32/direct3d12/hardware-support)).
+- Por eso no hacemos un anillo de samplers por draw: se llenaría enseguida. Hacemos lo mismo que
+  Dolphin
+  ([DescriptorHeapManager.cpp](https://github.com/dolphin-emu/dolphin/blob/master/Source/Core/VideoBackends/D3D12/DescriptorHeapManager.cpp)):
+  - Cada **tabla** de samplers (la lista de samplers que usa un draw) se **deduplica** con un mapa
+    `contenido → handle GPU`. Los juegos repiten las mismas combinaciones, así que se reutilizan
+    casi siempre.
+  - Si el heap se llena, se hace flush, se espera a que la GPU termine y se vacía el mapa. Es raro y
+    se registra en el log.
+- **Alternativa:** tener cada sampler único en un slot fijo y pasar índices por root constants
+  (bindless de samplers). Necesita SM 6.6 (`SamplerDescriptorHeap`) o índices dinámicos sobre una
+  tabla que cubra el heap entero. Lo evaluamos en la Fase 4 junto con la root signature.
+
+### 3a.3: implementación y orden de reserva
+
+- Hay allocators offline paginados para CBV/SRV/UAV, sampler, RTV y DSV. El DSV queda preparado
+  para la caché de texturas de 3c aunque el present todavía no lo consume.
+- El anillo visible tiene 262.144 slots. Agrupa todas las reservas de una command list bajo su tick,
+  retira desde el frente al completar fences y, si no hay espacio contiguo, espera el tick más
+  antiguo. Se valida que ninguna petición supere su capacidad ni el máximo D3D12 de un millón de
+  descriptores visibles CBV/SRV/UAV.
+- El heap visible de samplers usa el máximo fijo de 2048. Las tablas se indexan por el contenido de
+  sus claves; un hit devuelve la tabla existente sin consumir slots. Si se llena, `Finish()` deja
+  el heap sin lectores antes de vaciar el mapa y reutilizarlo.
+- **Orden obligatorio:** obtener primero la tabla de samplers, después reservar/copiar la tabla del
+  anillo, y solo entonces pedir staging y grabar comandos. Ambas reservas pueden enviar/resetear la
+  command list. Reservar después del staging asignaría su vida útil al tick equivocado; vincular
+  heaps antes de reservar perdería el estado con el reset.
+- `SetDescriptorHeaps` se llama con ambos heaps visibles a la vez, después de toda operación capaz
+  de hacer flush. D3D12 deja indefinidas las tablas al inicio de una lista o cuando cambian los
+  heaps, y admite como máximo uno de cada tipo visible.
+
+El gate local registra una página offline RTV (tipo 2), una de sampler (tipo 1), una CBV/SRV/UAV
+(tipo 0), el anillo de 262.144 slots, el heap de 2048 samplers, la primera copia de SRV y tanto la
+creación como el primer hit de la tabla deduplicada. El boot termina con retorno 0 y sin errores de
+Render. La página DSV se crea de forma perezosa cuando 3c solicite su primera vista.
+
+La prueba de Series 0.2.10.0 registró los mismos marcadores: tres páginas offline, anillo de
+262.144 slots, heap de 2048 samplers, primera copia de SRV, creación y primer hit de la tabla de
+sampler. Terminó con retorno 0, sin warnings/errores de Render, device removal ni fallback por CPU.
+Queda pendiente la confirmación visual del usuario.
+
+## 3a: cómo quedó implementado
+
+El present del renderer ya corre sobre las tres piezas. Así la prueba en consola valida 3a antes de
+que exista el rasterizador:
+- **Scheduler:**
+  - `RecordBlit`/`RecordCopy` graban en `scheduler.CommandList()`.
+  - `Present` hace `scheduler.Flush()` y guarda el tick de ese back buffer.
+  - Antes de volver a usar un back buffer, `Composite` espera su tick. Eso limita al CPU a
+    `IMAGE_COUNT` frames por delante de la GPU.
+- **Staging:** la imagen del guest (1280×720, unos 3,6 MB) sale del stream. El frame azul inicial se
+  solicita expresamente como diferido para forzar un buffer dedicado y probar los dos caminos.
+- **Descriptores:**
+  - El SRV de la imagen vive en el heap offline y se copia al anillo en cada frame.
+  - El sampler lineal ya no es un *static sampler*: pasa por `SamplerHeap::GetTable`, que lo
+    deduplica.
+  - Los RTV del swapchain salen del allocator offline.
+- **Cambio de tamaño:** la textura vieja se entrega a `scheduler.DeferRelease` en vez de esperar a
+  que la GPU quede ociosa, como hacía la Fase 2.
+
+**Reglas que conviene recordar:**
+- **`SetDescriptorHeaps` se pierde con cada `Reset()`** de la command list: hay que volver a
+  llamarlo en cada lista antes de usar tablas.
+- **Descriptores offline:** reescribir o liberar uno es seguro en cuanto su último uso quedó
+  grabado. `CopyDescriptors` y `OMSetRenderTargets` los leen en el momento de la llamada, en el
+  timeline de la CPU.
+- **Device removed:** `ID3D12Fence::GetCompletedValue()` devuelve `UINT64_MAX` cuando el device se
+  elimina. `Scheduler::KnownGpuTick` lo detecta y lanza una excepción con
+  `GetDeviceRemovedReason()`, en lugar de dar todo por terminado.
+
+## 3b–3d (resumen; se detalla al llegar)
+
+## 3b. Buffer cache runtime
+
+`d3d12_buffer_cache` implementa la política que exige `VideoCommon::BufferCache`:
+
+- `Buffer` es un recurso committed `DEFAULT`, `ROW_MAJOR`, creado en `COMMON`. El null buffer tiene
+  almacenamiento real de cuatro bytes porque D3D12 no admite un recurso nulo en todos los bindings.
+- Upload y download salen del staging pool de 3a.2. Las descargas diferidas conservan su buffer
+  hasta `FreeDeferredStagingBuffer`, y el consumidor espera el scheduler antes de leerlo.
+- `CopyBufferRegion` cubre staging→buffer, buffer→staging y buffer→buffer. Cada buffer vuelve a
+  `COMMON` al terminar el lote. D3D12 permite promotion desde `COMMON` y todos los buffers decaen a
+  `COMMON` al terminar `ExecuteCommandLists`; el cierre explícito también hace seguros varios usos
+  incompatibles dentro de una misma lista.
+- `ClearBuffer` genera el patrón de 32 bits en staging y lo copia al recurso. Evita depender de un
+  UAV y de heaps de descriptores para limpiar buffers que quizá no fueron creados con
+  `ALLOW_UNORDERED_ACCESS`.
+- Se implementan los bindings de índice y vértice; las tablas uniform/storage/texture se conectan a
+  la root signature en fase 4, cuando exista el pipeline que las consume.
+- Se instancia explícitamente `VideoCommon::BufferCache<BufferCacheParams>` durante el build, de
+  modo que cualquier método requerido por la caché genérica falla al compilar en vez de aparecer
+  tarde al integrar el rasterizador.
+
+El gate crea un buffer de 4096 bytes, escribe un patrón determinista en `UPLOAD`, lo copia a
+`DEFAULT`, lo descarga a `READBACK`, hace `Finish()` y compara los 4096 bytes. El log positivo es:
+
+```
+D3D12: buffer cache runtime ready
+D3D12: buffer cache round-trip passed (4096 bytes)
+```
+
+En PC terminó con `RunHeadlessBoot returned 0`, sin warnings/errores de Render ni device removal.
+La prueba de Series 0.2.11.0 reprodujo el mismo resultado: round-trip correcto, retorno 0 y sin
+warnings/errores de Render ni device removal. El gate de 3b queda validado en consola.
+
+**Barreras:** usamos `ResourceBarrier` clásico, porque la consola reporta `enhanced barriers no`.
+- **Buffers:** hacen *promotion* y *decay* implícitos. Al final de cada `ExecuteCommandLists` vuelven
+  a `COMMON` y se promueven solos en su primer uso. Por eso el estado de un buffer se sigue **solo
+  dentro de una command list** y se reinicia en cada flush
+  ([MS](https://learn.microsoft.com/en-us/windows/win32/direct3d12/using-resource-barriers-to-synchronize-resource-states-in-direct3d-12)).
+- **Texturas** (sin `SIMULTANEOUS_ACCESS`): hay que seguir su estado de forma explícita, por
+  recurso. Las de depth/stencil nunca se promueven.
+- Las barreras se **agrupan** y se emiten juntas antes de cada operación.
+
+## 3c. Texture cache runtime
+
+`d3d12_texture_cache` implementa el contrato completo que la caché genérica necesita antes de que
+el rasterizador de 3d la consuma:
+
+- `Image` crea recursos committed `DEFAULT` 1D/2D/3D, con mips, capas y MSAA. Conserva el estado
+  D3D12 del recurso entre command lists y emite barreras clásicas a COPY_SOURCE, COPY_DEST o lectura
+  de shader. La Series no tiene enhanced barriers.
+- La tabla de formatos cubre los formatos DXGI nativos de Switch: enteros, float, BCn, sRGB y
+  depth/stencil. El recurso es typeless cuando necesita vistas compatibles; SRV/RTV/DSV usan el
+  formato tipado correspondiente. ASTC se marca `Converted`/`CostlyLoad`: la CPU lo decodifica con
+  la conversión común de Eden, a RGBA8 o recomprimido a BC1/BC3 según `astc_recompression`, porque
+  D3D12 no tiene ASTC. Los formatos sin equivalente DXGI crean la imagen pero no transfieren datos
+  (`FormatInfo::supported = false`, con un aviso único en el log). Antes caían en `Converted`, y
+  `DecompressBCn` los habría procesado como si fueran BCn.
+- `ImageView` crea descriptores offline SRV y, cuando el formato lo permite, UAV/RTV o DSV. Las
+  vistas nulas son descriptores D3D12 nulos reales, no handles cero. `Sampler` traduce wrap,
+  filtros, comparación, LOD, anisotropía y border color. `Framebuffer` conserva las tablas RTV/DSV
+  y el extent que consumirá el rasterizador.
+- Las copias imagen↔imagen cubren regiones, mips y capas. MSAA distinto y blits filtrados quedan
+  conectados a los pipelines de las fases 4/5, donde existen shaders para resolver o convertir.
+
+### Footprints y filas no alineadas
+
+Los `BufferImageCopy` de Eden guardan filas apretadas. D3D12 exige que cada footprint empiece a
+512 bytes y que `RowPitch` sea múltiplo de 256. Hay tres rutas (`Image::CopyLayout`):
+
+1. **Directa:** si las filas ya miden un múltiplo de 256, los slices coinciden y el offset está
+   alineado a 512, el footprint apunta al buffer tal cual.
+2. **Subida desde staging (heap UPLOAD):** se reempaqueta en la **CPU** a una asignación nueva del
+   stream buffer con pitch alineado. Es un `memcpy` por fila y evita el buffer temporal y las miles
+   de `CopyBufferRegion` por fila de la versión anterior.
+3. **Origen o destino solo de GPU** (DMA desde el buffer cache, y todas las descargas, porque la
+   caché lee la memoria más tarde): se reempaqueta en la **GPU** mediante un buffer `DEFAULT`
+   temporal. El scheduler lo conserva hasta que termina el tick.
+
+El footprint usa el formato que `GetCopyableFootprints` asigna al plano 0. En texturas
+comprimidas, el tamaño del recurso y los extents se alinean al bloque (4×4), que es lo que exige
+D3D12. Los formatos depth+stencil combinados (D24S8, D32S8) no se transfieren todavía: D3D12 los
+guarda en planos separados y el guest los empaqueta juntos (queda para la Fase 5).
+
+El gate crea una textura 13×7 RGBA8: la fila de 52 bytes obliga al reempaquetado a 256. Ejecuta
+`UPLOAD → DEFAULT texture → READBACK`, compara los 364 bytes y crea SRV/UAV/RTV/DSV, vistas nulas,
+sampler y framebuffer. En PC terminó con `RunHeadlessBoot returned 0`, sin warnings/errores de
+Render ni device removal. El marcador positivo es:
+
+```
+D3D12: texture cache runtime ready
+D3D12: texture cache round-trip passed (13x7 RGBA8 unaligned rows, SRV/UAV/RTV/DSV, null views, sampler, framebuffer)
+```
+
+La Series reprodujo el gate en 0.2.12.0: comparó los 364 bytes, creó el heap DSV, presentó mediante
+el scheduler y terminó con `RunHeadlessBoot returned 0`, sin warnings/errores de Render, device
+removal ni fallback por CPU. 3c queda validada en consola.
+
+## 3d. Fences, queries y `RasterizerD3D12`
+
+- `RasterizerD3D12` sustituye al rasterizador nulo. Tiene las cachés genéricas por canal, DMA
+  acelerado (copias y clears de buffers, buffer↔imagen), fences y queries. Los draws, clears y
+  dispatches se ignoran con un aviso único hasta que existan los pipelines de la Fase 4.
+- `FenceManager`: el hilo de fences de Eden espera los ticks del scheduler
+  (`HAS_ASYNC_CHECK = true`).
+- Queries: `QueryCacheLegacy` con `ID3D12QueryHeap` y `ResolveQueryData` a un buffer de readback.
+  Los contadores se cierran al enviar la lista y se reabren al resetearla. Los tipos soportados son
+  SamplesPassed, PrimitivesGenerated y TfbPrimitivesWritten, con el mismo mapeo que OpenGL; el resto
+  va a `QueryFallback`.
+
+### Revisión de la fase 3 (antes del gate de 3d)
+
+Revisé la fase completa contra las plantillas de Eden y las reglas de D3D12. Estos fallos ya están
+corregidos:
+
+**Hilos** (el hilo de fences de Eden corre en paralelo al de GPU):
+- `Scheduler::Wait` compartía un único evento auto-reset. Si el hilo de GPU y el de fences esperaban
+  a la vez, uno podía consumir el aviso del otro y quedarse bloqueado para siempre. Ahora cada hilo
+  tiene su propio evento. Los ticks son atómicos y los envíos van bajo un mutex.
+- Un `Wait` sobre trabajo aún sin enviar hacía `Flush()` desde el hilo que llamaba. Si ese era el
+  hilo de fences, cerraba la command list mientras el de GPU seguía grabando en ella. Ahora solo
+  hace flush el hilo que graba; los demás esperan a que ese hilo envíe.
+- Con `IMPLEMENTS_ASYNC_DOWNLOADS = false`, el hilo de fences grababa descargas de texturas en la
+  lista y llamaba a `Finish()`. Ahora vale `true`, como en Vulkan: el hilo de GPU graba en
+  `CommitAsyncFlushes` y el de fences solo lee memoria ya mapeada.
+
+**Corrección de datos:**
+- **Stream buffer:** solo comprobaba si una región seguía en uso por la GPU al dar la vuelta. Al
+  avanzar en la vuelta siguiente podía pisar datos que la GPU aún leía. Ahora comprueba cada región
+  en la que entra por primera vez en la vuelta, con la regla estricta de Vulkan.
+- **Staging:** `Request(0)` lanzaba una excepción que habría matado el hilo de fences. Ahora da una
+  asignación mínima.
+- **Memoria de vídeo:** `GetDeviceMemoryUsage` hacía `reinterpret_cast` de `IDXGIAdapter1**` a
+  `IDXGIAdapter3` y llamaba a un método que ese objeto no tiene, además sobre el adaptador 0, que no
+  es necesariamente el del device. Ahora se usa `Device::QueryVideoMemory()` (`QueryInterface`).
+- **`DownloadMemory(span<buffers>)`:** asignaba un buffer por copia. El contrato de Vulkan es que
+  cada buffer recibe todas las copias, cada uno en su offset; `DownloadImageIntoBuffer` lo usa así.
+- **Copias con el mismo buffer como origen y destino** (`DMACopy`): no pueden estar en COPY_SOURCE y
+  COPY_DEST a la vez. Ahora pasan por un buffer intermedio.
+- **Estados de buffers del buffer cache:** subir o descargar texturas desde o hacia ellos los
+  promovía implícitamente y los dejaba así, y la siguiente copia del buffer cache ya no podía
+  promoverlos. Ahora vuelven a COMMON (`DecayIfDefault`).
+- **Imágenes convertidas (ASTC):** el cálculo de filas usaba los bloques del formato del guest en
+  lugar de los datos ya convertidos (`FormatInfo::copy_format`).
+- **Vistas:** RTV, DSV y UAV usaban siempre `TEXTURE2DARRAY`, que no vale en imágenes 3D, MSAA o 1D.
+  Ahora se valida el formato de cada vista. Los recursos solo piden `ALLOW_DEPTH_STENCIL` en 1D/2D y
+  UAV sin MSAA. El SRV sigue el tipo de vista, porque la dimensión debe coincidir con la que declara
+  el shader.
+- **Vida de los recursos:** `Buffer` e `Image` entregan su recurso a `scheduler.DeferRelease` al
+  destruirse, así la GPU nunca ve un recurso liberado.
+- **Copias dentro de la misma imagen:** necesitarían estado por subrecurso. Se omiten con aviso.
+
+**Pendiente (no bloquea el gate; va a la fase indicada):**
+- **Fase 4:**
+  - Un SRV por cada `Shader::TextureType` compatible, como Vulkan (hoy hay uno por vista).
+  - Claves de `SamplerHeap` únicas por `Sampler`: el handle offline se reutiliza tras `Free`.
+  - `BindMappedUniformBuffer` y los binds de UBO/SSBO/texel buffers.
+  - Huecos en el framebuffer (RTV nulos).
+- **Fase 5:**
+  - Canales invertidos en `B5G6R5_UNORM` (comparte formato DXGI con `R5G6B5`), `A1B5G5R5`,
+    `A4B4G4R4` y `A2R10G10B10`. Se arreglan con el swizzle del SRV.
+  - Transferencias de depth+stencil.
+  - MSAA.
+  - Blits y conversiones.
+- **Rendimiento, a medir:**
+  - Un heap de query y un readback committed por contador; mejor un pool.
+  - Decay a COMMON tras cada copia de buffer.
+  - Temporales de reempaquetado por GPU.
+  - Un `Flush` por cada fence.
+  - En el PC el bucle de 600 frames tardó ~11.1 s, frente a ~10.2 s en 3a.
+- `QueryCache::~QueryCache` llama a `ClearSubmissionCallbacks()`, que borra también los callbacks de
+  los demás. Hoy solo registra la query cache, pero conviene que cada uno quite solo los suyos.
+
+**Gate de 3d en el PC:** los dos autotests pasan, aparece `phase 3d rasterizer active`, no hay
+warnings ni errores de Render y el homebrew termina con `RunHeadlessBoot returned 0`.
+
+**Gate de 3d en la Series (0.2.13.0):** mismos marcadores y los dos autotests pasan. Hubo 0
+warnings/errores de Render y ningún device removed. El bucle de 600 frames tardó ~10.2 s, a
+60 fps. La memoria de la app llegó a 881 MiB de 5120 (antes 748 MiB, por las cachés y los heaps).
+**La fase 3 queda cerrada en consola.**
+
+## Cómo se prueba cada sub-fase
+1. Se compila con `tools\xbox\build-env.bat cmake --build --preset uwp-x64 --target eden-uwp`.
+2. Se prueba en el PC con `local-run.ps1` (loose register) y se revisa `eden_log.txt`.
+3. Se sube la versión del manifest, se empaqueta y se prueba en la Series en modo Game.
+4. Se anota el resultado en [`xbox_internal.md`](xbox_internal.md).
+
+## Fuentes
+- Microsoft Learn:
+  - [Fence-based resource management](https://learn.microsoft.com/en-us/windows/win32/direct3d12/fence-based-resource-management)
+  - [Using resource barriers](https://learn.microsoft.com/en-us/windows/win32/direct3d12/using-resource-barriers-to-synchronize-resource-states-in-direct3d-12)
+  - [Hardware tiers](https://learn.microsoft.com/en-us/windows/win32/direct3d12/hardware-support)
+  - [UMA optimizations](https://learn.microsoft.com/en-us/windows/win32/direct3d12/default-texture-mapping)
+  - [CopyDescriptorsSimple](https://learn.microsoft.com/en-us/windows/win32/api/d3d12/nf-d3d12-id3d12device-copydescriptorssimple)
+  - [Uploading texture data through buffers](https://learn.microsoft.com/en-us/windows/win32/direct3d12/upload-and-readback-of-texture-data)
+  - [GetCopyableFootprints](https://learn.microsoft.com/en-us/windows/win32/api/d3d12/nf-d3d12-id3d12device-getcopyablefootprints)
+  - [D3D12 format support](https://learn.microsoft.com/en-us/windows/win32/direct3ddxgi/hardware-support-for-direct3d-12-0-formats)
+- Backend D3D12 de Dolphin:
+  - [DX12Context.cpp](https://github.com/dolphin-emu/dolphin/blob/master/Source/Core/VideoBackends/D3D12/DX12Context.cpp)
+  - [D3D12StreamBuffer.cpp](https://github.com/dolphin-emu/dolphin/blob/master/Source/Core/VideoBackends/D3D12/D3D12StreamBuffer.cpp)
+  - [DescriptorHeapManager.cpp](https://github.com/dolphin-emu/dolphin/blob/master/Source/Core/VideoBackends/D3D12/DescriptorHeapManager.cpp)
+- [Diligent Graphics: dynamic resources in D3D12](https://diligentgraphics.com/2016/04/20/implementing-dynamic-resources-with-direct3d12/)
+- [MJP: GPU memory pools in D3D12](https://therealmjp.github.io/posts/gpu-memory-pool/)
+- [GameDev.net: descriptor heap strategies](https://gamedev.net/forums/topic/686440-d3d12-descriptor-heap-strategies/)
+- En el propio Eden, el modelo a seguir es `src/video_core/renderer_vulkan/`:
+  - `vk_scheduler`
+  - `vk_staging_buffer_pool`
+  - `vk_buffer_cache`
+  - `vk_texture_cache`
+  - `vk_fence_manager`

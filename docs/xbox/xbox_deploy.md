@@ -1,0 +1,203 @@
+# Packaging and deploying the headless boot appx to an Xbox Series X|S
+
+This is the step that turns the UWP build from [`docs/xbox/uwp_build.md`](uwp_build.md) into something
+that actually runs on a console. It covers **GATE 2**: proving Eden executed guest code through the
+dynarmic JIT inside the Xbox AppContainer.
+
+> **Current state:** the renderer executes guest D3D12 workloads and UWP uses native XAudio2 2.9
+> output. The `boot_nro` still proves JIT and graphics only; it does not open AudioOut. Real audio
+> is therefore gated with a game after the NRO returns 0. See [`xbox_audio.md`](xbox_audio.md).
+
+## What you need
+
+**On the console**
+- An Xbox Series X|S with **Dev Mode** activated (the *Xbox Dev Mode Activation* app, which requires
+  a Partner Center developer account).
+- Device Portal reachable at `https://<xbox-ip>:11443`.
+
+**On the PC**
+- Everything in [`docs/xbox/uwp_build.md`](uwp_build.md) (VS 2022 + the **C++ (v143) UWP tools**
+  component, a Windows 10/11 SDK, CMake, Ninja, native perl + nasm, vswhere on PATH).
+- The Windows SDK also supplies `MakeAppx.exe` and `SignTool.exe`, which the packaging script finds
+  on its own.
+
+**The payload**
+- **devkitPro** with the `switch-dev` package, to build the `boot.nro` in
+  [`tools/xbox/boot_nro/`](../../tools/xbox/boot_nro). That is ordinary homebrew, built from source
+  here: no keys, no firmware, no commercial ROMs — house rule, and nothing it calls needs them.
+
+Build the payload from that directory, in **PowerShell or cmd** (not a Git Bash shell — msys2's
+make resolves paths differently there and the compile fails):
+
+```
+C:\devkitPro\msys2\usr\bin\make.exe
+```
+
+It runs a loop, checks the result, and emits `EDEN_XBOX_JIT_ALIVE` only if the arithmetic came out
+right — a miscompiling JIT reports `EDEN_XBOX_JIT_MISCOMPILE` instead of silently passing the
+gate. Observing the sentinel is what makes GATE 2 positive proof rather than "it didn't crash".
+
+## Build, package, sign
+
+From a **`vcvarsall.bat x64 uwp`** shell with CMake + Ninja on PATH (see the build doc — all three
+env steps matter, and `echo %LIB% | findstr x64\store` must match):
+
+```bat
+cmake --preset uwp-x64
+cmake --build --preset uwp-x64 --target eden-uwp
+```
+
+Then, from PowerShell at the repo root:
+
+```powershell
+.\tools\xbox\package-appx.ps1 -BootNro C:\path\to\boot.nro
+```
+
+The script stages the layout, packs it, mints (or reuses) a self-signed code-signing certificate
+whose subject matches the manifest's `Publisher`, signs the package, and exports the `.cer`:
+
+```
+build-uwp\package\eden-xbox.appx
+build-uwp\package\eden-xbox.cer
+build-uwp\package\Microsoft.VCLibs.x64.14.00.appx
+```
+
+That third file is the **Store CRT framework package**. The exe hard-imports `VCRUNTIME140_APP` /
+`MSVCP140_APP`, which live there rather than in our package, so the manifest declares it as a
+`PackageDependency` and the console needs it installed. Without it the app fails to *activate*, with
+a generic launch error and no crash dump. The script copies it out of the VS Extension SDK, which
+means the **"C++ (v143) Universal Windows Platform tools"** component has to be installed — the
+base C++ toolset alone links the app fine but does not ship this package.
+
+## Deploy
+
+1. Open `https://<xbox-ip>:11443` and accept the self-signed certificate warning.
+2. **Add** → upload `eden-xbox.appx`, with `eden-xbox.cer` as the certificate and
+   `Microsoft.VCLibs.x64.14.00.appx` as a **dependency package**. The console must trust the signer
+   and must have the framework package, or installation or activation fails with a generic error.
+3. Set the app to **Game mode**, not App mode. App mode caps a UWP app at roughly a gigabyte of
+   memory; Game mode is what makes the emulated DRAM reservation viable — especially on Series S.
+4. Launch it.
+
+## Audio gate
+
+The default is `audio=xaudio2`: PCM16 stereo at 48 kHz through the system default endpoint. No
+extra DLL, microphone capability or redistributable is needed. Optional `boot.cfg` entries are:
+
+```ini
+audio=xaudio2
+audio_profile=1
+```
+
+Use `audio=null` for a timed silent comparison. An unknown `audio=` value writes a warning and
+falls back to XAudio2. With profiling enabled, inspect `eden_log.txt` for the periodic `XAudio2
+profile` line and for any `GlitchesSinceEngineStarted` increase. The console acceptance gate is at
+least 15 minutes of continuous game audio over HDMI (and controller headphones when available),
+with no repeated pops, distortion, `Critical`, deadlock or frame-pacing regression. If the endpoint
+is lost, the game must continue at normal speed using the silent paced fallback.
+
+## Reading the result
+
+The boot writes two things into the app's **LocalFolder**, pullable through the Device Portal's file
+explorer:
+
+- **`eden_uwp_diag.txt`** — coarse startup breadcrumbs written before Eden's logging is up
+  (`BootView::Run entered`, the resolved NRO path, `RunHeadlessBoot returned <rc>`, or the exception
+  that killed it). This is the file to read when the app flashes and closes.
+- **`eden_log.txt`** — Eden's own log, once logging initialises. GATE 2 passes on:
+  `Headless boot: JIT liveness CONFIRMED ('EDEN_XBOX_JIT_ALIVE' observed).`
+
+Return codes from `RunHeadlessBoot`: `0` liveness confirmed · `2` the NRO failed to load ·
+`3` the app ran but the sentinel never appeared within the 30 s backstop.
+
+## Manifest notes
+
+[`dist/uwp/AppxManifest.xml`](../../dist/uwp/AppxManifest.xml) is deliberately minimal, but two things
+in it are load-bearing:
+
+- **`<Capability Name="codeGeneration" />`** — this is what unlocks `VirtualProtectFromApp`,
+  `CreateFileMappingFromApp` and `MapViewOfFileFromApp` for the AppContainer. Without it dynarmic
+  cannot make JIT pages executable and `common/host_memory.cpp` cannot map the emulated DRAM. Drop
+  this line and nothing about the port works.
+- **`Identity/@Publisher` must equal the signing certificate's subject** character for character.
+  A mismatch is the most common sideload rejection; `package-appx.ps1` checks it before packing.
+
+`EntryPoint="eden-uwp.App"` is the conventional moniker for a plain C++/WinRT `CoreApplication` app
+(`wWinMain` + `IFrameworkView`, see [`src/eden_uwp/uwp_boot.cpp`](../../src/eden_uwp/uwp_boot.cpp));
+there is no activatable WinRT class to name.
+
+## When it does not activate
+
+A UWP app that fails **activation** dies before any of your code runs — no log, no dump, no diag
+file. The usual causes, in the order worth checking:
+
+- **A hard import on a DLL the Xbox sandbox does not provide.** `src/eden_uwp/CMakeLists.txt`
+  already delay-loads the known set (WLAN API set, setupapi, hid, winmm, imm32, user32…). A new
+  dependency that pulls a desktop-only DLL reintroduces this. Inspect with
+  `dumpbin /imports eden-uwp.exe`.
+- **Missing `codeGeneration`**, which fails later, at the first JIT page protect.
+- **App mode instead of Game mode** — shows up as an out-of-memory death during DRAM reservation
+  rather than at activation.
+
+Para diagnosticar CPU guest en 0.2.68.0 se puede agregar `cpu_profile=1` a BootCfg.
+El log informa Run y callbacks por core; Run es tiempo transcurrido e incluye traduccion,
+callbacks y preemption, no utilizacion CPU. El perfil esta desactivado por defecto y agrega
+trabajo si se activa: comparar rendimiento con la misma configuracion en ambas builds.
+Para estudiar las cargas, combinarlo con `gpu_profile=1` y repetir el mismo recorrido.
+
+### Perfilador por muestreo (desde 0.2.75.2)
+
+Es el perfilador de CPU para la consola, donde no hay xperf ni PIX para UWP. Funciona así:
+
+- Pausa cada hilo con nombre 250 veces por segundo, copia su pila y lo reanuda. Cada pausa dura
+  unos 20 us, así que a un hilo que trabaja le cuesta menos del 1%.
+- La pila se desenrolla después, sobre la copia, con el hilo ya corriendo.
+- Los hilos bloqueados se muestrean 32 veces menos.
+
+Va apagado por defecto. Se activa al empaquetar un build de diagnóstico; un release se empaqueta
+sin la opción:
+
+```
+powershell -ExecutionPolicy Bypass -File tools\xbox\package-appx.ps1 -Library -Profile on
+```
+
+- `-Profile on` escribe `profile=1` en `boot.cfg`: solo el muestreo.
+- `-Profile full` escribe `profile=full`: además activa `gpu_profile` y `cpu_profile`. Esos
+  cronómetros sí frenan el hilo de GPU.
+- Con `-BootCfg` se ajustan la frecuencia, `profile_hz=` (10-1000, 250 por defecto), y la
+  duración de cada ventana, `profile_window=` (segundos, 20 por defecto).
+
+Cada ventana se añade a `LocalState\eden\log\eden_profile.txt`. Incluye el tiempo de CPU de cada
+hilo y cada pila distinta, con cuántas veces se vio corriendo (R) o esperando (W). El archivo se
+vacía al abrir la app; cada juego que se abre desde la biblioteca añade sus ventanas. En el PC,
+con el PDB del mismo build:
+
+```
+python tools/xbox/profile-report.py eden_profile.txt --out informe.md --folded perfil.folded
+```
+
+El informe incluye:
+
+- Qué hilos están saturados y en qué subsistema se les va el tiempo.
+- Por hilo:
+  - las funciones más caras, solas y con lo que llaman;
+  - quién llama al sistema y al driver;
+  - dónde espera.
+
+`perfil.folded` se abre en https://www.speedscope.app como flame graph. `--window N` o `--window
+N-M` limitan el informe a unas ventanas, por ejemplo las de la zona lenta.
+
+La presentación usa un hilo propio por defecto. Con `async_present=0` en BootCfg se presenta en
+el hilo de GPU, como antes de ese cambio. El log dice qué modo se usa:
+`D3D12: presentation on its own thread` o `on the GPU thread`.
+
+Las llamadas a la command list de D3D12 se pueden hacer en un hilo propio (`D3D12Recorder`) con
+`async_record=1` en BootCfg: el hilo de GPU solo las graba, en bloques que ese hilo ejecuta en
+orden y envía a la cola. Por defecto el hilo de GPU las hace él mismo. El log dice qué modo se usa:
+`D3D12: command list calls made on a recording thread` o `on the GPU thread`.
+
+El hilo `HostTiming` duerme hasta poco antes de cada evento con un timer de alta resolución y
+solo espera en la CPU el retraso que ese timer suele tener (decenas de microsegundos). Con
+`timer_sleep=0` en BootCfg vuelve a dormir por ticks del timer del sistema y a esperar en la CPU
+el último tick entero, como antes: más preciso, pero ocupa casi un núcleo. El log dice qué modo
+se usa: `Host clock: ..., sleeps: high-resolution timer` u `OS timer ticks`.

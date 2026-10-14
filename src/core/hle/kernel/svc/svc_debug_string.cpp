@@ -1,0 +1,54 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+// SPDX-FileCopyrightText: Copyright 2023 yuzu Emulator Project
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+#include <condition_variable>
+#include <mutex>
+#include <optional>
+#include <stop_token>
+#include <thread>
+
+#include "core/core.h"
+#include "core/hle/kernel/k_thread.h"
+#include "core/hle/kernel/svc.h"
+#include "core/hle/kernel/svc/svc_debug_string.h"
+#include "core/memory.h"
+
+namespace Kernel::Svc {
+
+namespace {
+std::mutex g_debug_observer_mutex;
+DebugStringObserver g_debug_observer;
+} // namespace
+
+void SetDebugStringObserver(DebugStringObserver observer) {
+    std::lock_guard lock(g_debug_observer_mutex);
+    g_debug_observer = std::move(observer);
+}
+
+/// Used to output a message on a debug hardware unit - does nothing on a retail unit
+Result OutputDebugString(Core::System& system, u64 address, u64 len) {
+    R_SUCCEED_IF(len == 0);
+    std::string msg_buffer(len, 0);
+    GetCurrentMemory(system.Kernel()).ReadBlock(address, msg_buffer.data(), len);
+    LOG_INFO(Debug_Emulated, "{}", msg_buffer);
+    // The headless UWP boot frontend installs an observer to watch for its liveness sentinel;
+    // normal builds do not, and pay only the lock.
+    std::lock_guard observer_lock(g_debug_observer_mutex);
+    if (g_debug_observer) {
+        g_debug_observer(msg_buffer);
+    }
+    R_SUCCEED();
+}
+
+Result OutputDebugString64(Core::System& system, uint64_t debug_str, uint64_t len) {
+    R_RETURN(OutputDebugString(system, debug_str, len));
+}
+
+Result OutputDebugString64From32(Core::System& system, uint32_t debug_str, uint32_t len) {
+    R_RETURN(OutputDebugString(system, debug_str, len));
+}
+
+} // namespace Kernel::Svc

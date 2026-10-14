@@ -1,0 +1,480 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+// SPDX-FileCopyrightText: Copyright 2021 yuzu Emulator Project
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+#include "core/arm/exclusive_monitor.h"
+#include "core/core.h"
+#include "core/hle/kernel/k_address_arbiter.h"
+#include "core/hle/kernel/k_process.h"
+#include "core/hle/kernel/k_scheduler.h"
+#include "core/hle/kernel/k_scoped_scheduler_lock_and_sleep.h"
+#include "core/hle/kernel/k_thread.h"
+#include "core/hle/kernel/k_thread_queue.h"
+#include "core/hle/kernel/k_typed_address.h"
+#include "core/hle/kernel/kernel.h"
+#include "core/hle/kernel/svc_results.h"
+#include "core/memory.h"
+#include "video_core/frame_trace.h"
+
+namespace Kernel {
+
+KAddressArbiter::KAddressArbiter(Core::System& system_)
+    : system{system_}
+{}
+KAddressArbiter::~KAddressArbiter() = default;
+
+namespace {
+
+void TraceAddressWake(KernelCore& kernel, u64 address, const KThread& target) {
+    if (!VideoCore::FrameTrace::TracksGuest(target.GetThreadId()) ||
+        !VideoCore::FrameTrace::Active()) {
+        return;
+    }
+    const u64 signalling_guest = GetCurrentThreadPointer(kernel)->GetThreadId();
+    VideoCore::FrameTrace::Mark(VideoCore::FrameTrace::Event::AddressWake, address,
+                               target.GetThreadId() | (signalling_guest << 32));
+}
+
+bool ReadFromUser(KernelCore& kernel, s32* out, KProcessAddress address) {
+    *out = GetCurrentMemory(kernel).Read32(GetInteger(address));
+    return true;
+}
+
+bool DecrementIfLessThan(KernelCore& kernel, s32* out, KProcessAddress address, s32 value) {
+    auto& monitor = GetCurrentProcess(kernel).GetExclusiveMonitor();
+    const auto current_core = kernel.CurrentPhysicalCoreIndex();
+
+    // NOTE: If scheduler lock is not held here, interrupt disable is required.
+    // KScopedInterruptDisable di;
+
+    // TODO(bunnei): We should call CanAccessAtomic(..) here.
+
+    s32 current_value{};
+
+    while (true) {
+        // Load the value from the address.
+        current_value =
+            static_cast<s32>(monitor.ExclusiveRead32(current_core, GetInteger(address)));
+
+        // Compare it to the desired one.
+        if (current_value < value) {
+            // If less than, we want to try to decrement.
+            const s32 decrement_value = current_value - 1;
+
+            // Decrement and try to store.
+            if (monitor.ExclusiveWrite32(current_core, GetInteger(address),
+                                         static_cast<u32>(decrement_value))) {
+                break;
+            }
+
+            // If we failed to store, try again.
+        } else {
+            // Otherwise, clear our exclusive hold and finish
+            monitor.ClearExclusive(current_core);
+            break;
+        }
+    }
+
+    // We're done.
+    *out = current_value;
+    return true;
+}
+
+bool UpdateIfEqual(KernelCore& kernel, s32* out, KProcessAddress address, s32 value,
+                   s32 new_value) {
+    auto& monitor = GetCurrentProcess(kernel).GetExclusiveMonitor();
+    const auto current_core = kernel.CurrentPhysicalCoreIndex();
+
+    // NOTE: If scheduler lock is not held here, interrupt disable is required.
+    // KScopedInterruptDisable di;
+
+    // TODO(bunnei): We should call CanAccessAtomic(..) here.
+
+    s32 current_value{};
+
+    // Load the value from the address.
+    while (true) {
+        current_value =
+            static_cast<s32>(monitor.ExclusiveRead32(current_core, GetInteger(address)));
+
+        // Compare it to the desired one.
+        if (current_value == value) {
+            // If equal, we want to try to write the new value.
+
+            // Try to store.
+            if (monitor.ExclusiveWrite32(current_core, GetInteger(address),
+                                         static_cast<u32>(new_value))) {
+                break;
+            }
+
+            // If we failed to store, try again.
+        } else {
+            // Otherwise, clear our exclusive hold and finish.
+            monitor.ClearExclusive(current_core);
+            break;
+        }
+    }
+
+    // We're done.
+    *out = current_value;
+    return true;
+}
+
+class ThreadQueueImplForKAddressArbiter : public KThreadQueue {
+public:
+    explicit ThreadQueueImplForKAddressArbiter(KernelCore& kernel, KAddressArbiter::ThreadTree* t)
+        : KThreadQueue(kernel), m_tree(t) {}
+
+    ThreadWaitCheckpoint CaptureCheckpoint(const IdentifyWaitObject&, const KThread* thread) const override {
+        if (!thread || !thread->IsWaitingForAddressArbiter()) {
+            throw std::runtime_error("Pulse: address arbiter wait has no tree");
+        }
+        ThreadWaitCheckpoint state{CheckpointWaitKind::AddressArbiter, 0, {},
+                                   thread->GetAddressArbiterKey(), 0};
+        u64 visited{};
+        for (const auto& waiter : *m_tree) {
+            if (++visited > 65536) throw std::runtime_error("Pulse: address arbiter wait limit");
+            if (&waiter == thread) return state;
+            if (waiter.GetAddressArbiterKey() == state.address &&
+                waiter.GetPriority() == thread->GetPriority()) ++state.ordinal;
+        }
+        throw std::runtime_error("Pulse: address arbiter waiter is not linked");
+    }
+
+    void CancelWait(KernelCore& kernel, KThread* waiting_thread, Result wait_result, bool cancel_timer_task) override {
+        if (waiting_thread->IsWaitingForAddressArbiter() &&
+            VideoCore::FrameTrace::TracksGuest(waiting_thread->GetThreadId())) {
+            VideoCore::FrameTrace::Mark(VideoCore::FrameTrace::Event::AddressCancel,
+                                       wait_result.raw, waiting_thread->GetThreadId());
+        }
+        // If the thread is waiting on an address arbiter, remove it from the tree.
+        if (waiting_thread->IsWaitingForAddressArbiter()) {
+            m_tree->erase(m_tree->iterator_to(*waiting_thread));
+            waiting_thread->ClearAddressArbiter();
+        }
+
+        // Invoke the base cancel wait handler.
+        KThreadQueue::CancelWait(kernel, waiting_thread, wait_result, cancel_timer_task);
+    }
+
+protected:
+    KAddressArbiter::ThreadTree* m_tree{};
+};
+
+class RestoredAddressArbiterWait final : public ThreadQueueImplForKAddressArbiter {
+public:
+    RestoredAddressArbiterWait(KernelCore& kernel, KAddressArbiter::ThreadTree* tree,
+                              const ThreadWaitCheckpoint& state)
+        : ThreadQueueImplForKAddressArbiter(kernel, tree), m_address(state.address),
+          m_ordinal(state.ordinal) {}
+
+    ~RestoredAddressArbiterWait() override {
+        ASSERT(!m_thread || !m_thread->IsWaitingForAddressArbiter());
+    }
+
+    void LinkCheckpointWait(KThread* thread) override {
+        ASSERT(!m_thread);
+        u64 ordinal{};
+        u64 visited{};
+        for (const auto& waiter : *m_tree) {
+            if (++visited > 65536) throw std::runtime_error("Pulse: address arbiter wait limit");
+            if (waiter.GetAddressArbiterKey() == m_address &&
+                waiter.GetPriority() == thread->GetPriority()) ++ordinal;
+        }
+        if (ordinal != m_ordinal) {
+            throw std::invalid_argument("Pulse: address arbiter wait restore order");
+        }
+        // The decrement/condition check already happened before capture. Rebuild
+        // only the wait; replaying it would change guest memory a second time.
+        thread->SetAddressArbiter(m_tree, m_address);
+        m_tree->insert(*thread);
+        m_thread = thread;
+    }
+
+    void AbandonCheckpointWait(KernelCore& kernel, KThread* thread) override {
+        if (m_thread && thread->IsWaitingForAddressArbiter()) {
+            m_tree->erase(m_tree->iterator_to(*thread));
+            thread->ClearAddressArbiter();
+        }
+        KThreadQueue::AbandonCheckpointWait(kernel, thread);
+    }
+
+private:
+    u64 m_address;
+    u64 m_ordinal;
+    KThread* m_thread{};
+};
+
+} // namespace
+
+std::unique_ptr<KThreadQueue> KAddressArbiter::CreateCheckpointWait(
+    KernelCore& kernel, const ThreadWaitCheckpoint& state) {
+    ValidateWaitCheckpoint(state);
+    if (state.kind != CheckpointWaitKind::AddressArbiter) {
+        throw std::invalid_argument("Pulse: wrong address arbiter continuation kind");
+    }
+    return std::make_unique<RestoredAddressArbiterWait>(kernel, &m_tree, state);
+}
+
+Result KAddressArbiter::Signal(uint64_t addr, s32 count) {
+    // Perform signaling.
+    s32 num_waiters{};
+    {
+        KScopedSchedulerLock sl(system.Kernel());
+
+        auto it = m_tree.nfind_key({addr, -1});
+        while ((it != m_tree.end()) && (count <= 0 || num_waiters < count) &&
+               (it->GetAddressArbiterKey() == addr)) {
+            // End the thread's wait.
+            KThread* target_thread = std::addressof(*it);
+            TraceAddressWake(system.Kernel(), addr, *target_thread);
+            target_thread->EndWait(system.Kernel(), ResultSuccess);
+
+            ASSERT(target_thread->IsWaitingForAddressArbiter());
+            target_thread->ClearAddressArbiter();
+
+            it = m_tree.erase(it);
+            ++num_waiters;
+        }
+    }
+    R_SUCCEED();
+}
+
+Result KAddressArbiter::SignalAndIncrementIfEqual(uint64_t addr, s32 value, s32 count) {
+    // Perform signaling.
+    s32 num_waiters{};
+    {
+        KScopedSchedulerLock sl(system.Kernel());
+
+        // Check the userspace value.
+        s32 user_value{};
+        R_UNLESS(UpdateIfEqual(system.Kernel(), std::addressof(user_value), addr, value, value + 1),
+                 ResultInvalidCurrentMemory);
+        R_UNLESS(user_value == value, ResultInvalidState);
+
+        auto it = m_tree.nfind_key({addr, -1});
+        while ((it != m_tree.end()) && (count <= 0 || num_waiters < count) &&
+               (it->GetAddressArbiterKey() == addr)) {
+            // End the thread's wait.
+            KThread* target_thread = std::addressof(*it);
+            TraceAddressWake(system.Kernel(), addr, *target_thread);
+            target_thread->EndWait(system.Kernel(), ResultSuccess);
+
+            ASSERT(target_thread->IsWaitingForAddressArbiter());
+            target_thread->ClearAddressArbiter();
+
+            it = m_tree.erase(it);
+            ++num_waiters;
+        }
+    }
+    R_SUCCEED();
+}
+
+Result KAddressArbiter::SignalAndModifyByWaitingCountIfEqual(uint64_t addr, s32 value, s32 count) {
+    // Perform signaling.
+    s32 num_waiters{};
+    {
+        KScopedSchedulerLock sl(system.Kernel());
+
+        auto it = m_tree.nfind_key({addr, -1});
+        // Determine the updated value.
+        s32 new_value{};
+        if (count <= 0) {
+            if (it != m_tree.end() && it->GetAddressArbiterKey() == addr) {
+                new_value = value - 2;
+            } else {
+                new_value = value + 1;
+            }
+        } else {
+            if (it != m_tree.end() && it->GetAddressArbiterKey() == addr) {
+                auto tmp_it = it;
+                s32 tmp_num_waiters{};
+                while (++tmp_it != m_tree.end() && tmp_it->GetAddressArbiterKey() == addr) {
+                    if (tmp_num_waiters++ >= count) {
+                        break;
+                    }
+                }
+
+                if (tmp_num_waiters < count) {
+                    new_value = value - 1;
+                } else {
+                    new_value = value;
+                }
+            } else {
+                new_value = value + 1;
+            }
+        }
+
+        // Check the userspace value.
+        s32 user_value{};
+        bool succeeded{};
+        if (value != new_value) {
+            succeeded = UpdateIfEqual(system.Kernel(), std::addressof(user_value), addr, value, new_value);
+        } else {
+            succeeded = ReadFromUser(system.Kernel(), std::addressof(user_value), addr);
+        }
+
+        R_UNLESS(succeeded, ResultInvalidCurrentMemory);
+        R_UNLESS(user_value == value, ResultInvalidState);
+
+        while ((it != m_tree.end()) && (count <= 0 || num_waiters < count) &&
+               (it->GetAddressArbiterKey() == addr)) {
+            // End the thread's wait.
+            KThread* target_thread = std::addressof(*it);
+            TraceAddressWake(system.Kernel(), addr, *target_thread);
+            target_thread->EndWait(system.Kernel(), ResultSuccess);
+
+            ASSERT(target_thread->IsWaitingForAddressArbiter());
+            target_thread->ClearAddressArbiter();
+
+            it = m_tree.erase(it);
+            ++num_waiters;
+        }
+    }
+    R_SUCCEED();
+}
+
+Result KAddressArbiter::WaitIfLessThan(uint64_t addr, s32 value, bool decrement, s64 timeout) {
+    // Prepare to wait.
+    KThread* cur_thread = GetCurrentThreadPointer(system.Kernel());
+    u32 trace_capture{};
+    KHardwareTimer* timer{};
+    ThreadQueueImplForKAddressArbiter wait_queue(system.Kernel(), std::addressof(m_tree));
+
+    {
+        KScopedSchedulerLockAndSleep slp{system.Kernel(), std::addressof(timer), cur_thread, timeout};
+
+        // Check that the thread isn't terminating.
+        if (cur_thread->IsTerminationRequested()) {
+            slp.CancelSleep();
+            R_THROW(ResultTerminationRequested);
+        }
+
+        // Read the value from userspace.
+        s32 user_value{};
+        bool succeeded{};
+        if (decrement) {
+            succeeded = DecrementIfLessThan(system.Kernel(), std::addressof(user_value), addr, value);
+        } else {
+            succeeded = ReadFromUser(system.Kernel(), std::addressof(user_value), addr);
+        }
+
+        if (!succeeded) {
+            slp.CancelSleep();
+            R_THROW(ResultInvalidCurrentMemory);
+        }
+
+        // Check that the value is less than the specified one.
+        if (user_value >= value) {
+            slp.CancelSleep();
+            R_THROW(ResultInvalidState);
+        }
+
+        // Check that the timeout is non-zero.
+        if (timeout == 0) {
+            slp.CancelSleep();
+            R_THROW(ResultTimedOut);
+        }
+
+        if (VideoCore::FrameTrace::TracksGuest(cur_thread->GetThreadId()) &&
+            VideoCore::FrameTrace::Active()) {
+            trace_capture = VideoCore::FrameTrace::GetCaptureStatus().id;
+            VideoCore::FrameTrace::Mark(VideoCore::FrameTrace::Event::AddressWaitBegin,
+                                       addr, cur_thread->GetThreadId());
+            VideoCore::FrameTrace::Mark(VideoCore::FrameTrace::Event::AddressWaitCondition,
+                static_cast<u32>(user_value) | (static_cast<u64>(static_cast<u32>(value)) << 32),
+                cur_thread->GetThreadId() | (static_cast<u64>(decrement ? 1 : 0) << 32));
+            VideoCore::FrameTrace::Mark(VideoCore::FrameTrace::Event::AddressWaitTimeout,
+                                       static_cast<u64>(timeout), cur_thread->GetThreadId());
+        }
+
+        // Set the arbiter.
+        cur_thread->SetAddressArbiter(std::addressof(m_tree), addr);
+        m_tree.insert(*cur_thread);
+
+        // Wait for the thread to finish.
+        wait_queue.SetHardwareTimer(timer);
+        cur_thread->BeginWait(system.Kernel(), std::addressof(wait_queue));
+        cur_thread->SetWaitReasonForDebugging(ThreadWaitReasonForDebugging::Arbitration);
+    }
+
+    // Get the result.
+    const auto result = cur_thread->GetWaitResult();
+    if (trace_capture != 0 && VideoCore::FrameTrace::Active() &&
+        VideoCore::FrameTrace::GetCaptureStatus().id == trace_capture) {
+        VideoCore::FrameTrace::Mark(VideoCore::FrameTrace::Event::AddressWaitEnd,
+                                   result.raw, cur_thread->GetThreadId());
+    }
+    return result;
+}
+
+Result KAddressArbiter::WaitIfEqual(uint64_t addr, s32 value, s64 timeout) {
+    // Prepare to wait.
+    KThread* cur_thread = GetCurrentThreadPointer(system.Kernel());
+    u32 trace_capture{};
+    KHardwareTimer* timer{};
+    ThreadQueueImplForKAddressArbiter wait_queue(system.Kernel(), std::addressof(m_tree));
+
+    {
+        KScopedSchedulerLockAndSleep slp{system.Kernel(), std::addressof(timer), cur_thread, timeout};
+
+        // Check that the thread isn't terminating.
+        if (cur_thread->IsTerminationRequested()) {
+            slp.CancelSleep();
+            R_THROW(ResultTerminationRequested);
+        }
+
+        // Read the value from userspace.
+        s32 user_value{};
+        if (!ReadFromUser(system.Kernel(), std::addressof(user_value), addr)) {
+            slp.CancelSleep();
+            R_THROW(ResultInvalidCurrentMemory);
+        }
+
+        // Check that the value is equal.
+        if (value != user_value) {
+            slp.CancelSleep();
+            R_THROW(ResultInvalidState);
+        }
+
+        // Check that the timeout is non-zero.
+        if (timeout == 0) {
+            slp.CancelSleep();
+            R_THROW(ResultTimedOut);
+        }
+
+        if (VideoCore::FrameTrace::TracksGuest(cur_thread->GetThreadId()) &&
+            VideoCore::FrameTrace::Active()) {
+            trace_capture = VideoCore::FrameTrace::GetCaptureStatus().id;
+            VideoCore::FrameTrace::Mark(VideoCore::FrameTrace::Event::AddressWaitBegin,
+                                       addr, cur_thread->GetThreadId());
+            VideoCore::FrameTrace::Mark(VideoCore::FrameTrace::Event::AddressWaitCondition,
+                static_cast<u32>(user_value) | (static_cast<u64>(static_cast<u32>(value)) << 32),
+                cur_thread->GetThreadId() | (u64{2} << 32));
+            VideoCore::FrameTrace::Mark(VideoCore::FrameTrace::Event::AddressWaitTimeout,
+                                       static_cast<u64>(timeout), cur_thread->GetThreadId());
+        }
+
+        // Set the arbiter.
+        cur_thread->SetAddressArbiter(std::addressof(m_tree), addr);
+        m_tree.insert(*cur_thread);
+
+        // Wait for the thread to finish.
+        wait_queue.SetHardwareTimer(timer);
+        cur_thread->BeginWait(system.Kernel(), std::addressof(wait_queue));
+        cur_thread->SetWaitReasonForDebugging(ThreadWaitReasonForDebugging::Arbitration);
+    }
+
+    // Get the result.
+    const auto result = cur_thread->GetWaitResult();
+    if (trace_capture != 0 && VideoCore::FrameTrace::Active() &&
+        VideoCore::FrameTrace::GetCaptureStatus().id == trace_capture) {
+        VideoCore::FrameTrace::Mark(VideoCore::FrameTrace::Event::AddressWaitEnd,
+                                   result.raw, cur_thread->GetThreadId());
+    }
+    return result;
+}
+
+} // namespace Kernel
