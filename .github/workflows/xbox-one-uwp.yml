@@ -1,0 +1,179 @@
+name: Xbox One Fat - UWP SM5.1 build and signed diagnostic
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/xbox-one-uwp.yml'
+      - 'CMakePresets.json'
+      - 'CMakeLists.txt'
+      - 'src/**'
+      - 'tools/xbox/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 90
+    # Rebuild the C++ objects directly using MSVC. The first sccache/GHA run
+    # stalled in OpenSSL's external nmake build; keep the proven toolchain while
+    # caching only CPM dependency sources.
+    steps:
+      - name: Checkout original Eden source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Restore CMake CPM source cache
+        id: cpm-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache/cpm
+          key: cpmsrc-win2022-uwp-v1-${{ hashFiles('CMakeLists.txt', 'CMakePresets.json', 'CMakeModules/**/*.cmake', 'externals/CMakeLists.txt') }}
+          restore-keys: |
+            cpmsrc-win2022-uwp-v1-
+
+      - name: Inspect Windows UWP toolchain
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (!(Test-Path $vswhere)) { throw 'Visual Studio Installer / vswhere not found' }
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (!$vs) { throw 'VS2022 C++ toolset missing' }
+          Write-Host "VS root: $vs"
+          $uwp = & $vswhere -latest -products * -requires Microsoft.VisualStudio.ComponentGroup.UWP.VC -property installationPath
+          Write-Host "UWP C++ component: $(if ($uwp) {'present'} else {'not detected'})"
+          foreach ($cmd in 'cmake', 'ninja', 'perl', 'nasm', 'glslangValidator', 'glslang') {
+            $found = Get-Command $cmd -ErrorAction SilentlyContinue
+            Write-Host "${cmd}: $(if ($found) {$found.Source} else {'missing'})"
+          }
+          cmake --version
+
+      - name: Install native build utilities
+        shell: pwsh
+        run: |
+          choco install nasm strawberryperl -y --no-progress --limit-output
+
+      - name: Install and verify glslang shader compiler
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $url = 'https://github.com/KhronosGroup/glslang/releases/download/16.6.0/glslang-16.6.0-windows-x86_64-release.zip'
+          $expected = '82bf434e69b9bb4829de7e2b4bc2c5e7a7861e53d66cf75e5cc70f5f694a8d9b'
+          $zip = Join-Path $env:RUNNER_TEMP 'glslang.zip'
+          $dir = Join-Path $env:RUNNER_TEMP 'glslang-unpack'
+          Invoke-WebRequest -Uri $url -OutFile $zip
+          $actual = (Get-FileHash -Path $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw "glslang release hash mismatch: $actual" }
+          Expand-Archive -Path $zip -DestinationPath $dir -Force
+          $binary = Get-ChildItem $dir -Filter glslangValidator.exe -Recurse -File |
+            Select-Object -First 1
+          if (!$binary) {
+            $binary = Get-ChildItem $dir -Filter glslang.exe -Recurse -File |
+              Select-Object -First 1
+          }
+          if (!$binary) { throw 'Missing glslang executable in verified release ZIP' }
+          $bin = Join-Path $env:RUNNER_TEMP 'glslang-bin'
+          New-Item -ItemType Directory -Path $bin -Force | Out-Null
+          Copy-Item $binary.FullName (Join-Path $bin 'glslangValidator.exe')
+          Add-Content -Path $env:GITHUB_PATH -Value $bin
+          & (Join-Path $bin 'glslangValidator.exe') --version
+
+      - name: Configure UWP x64 for AppContainer
+        shell: cmd
+        run: call tools\xbox\build-env.bat cmake --preset uwp-x64
+
+      # Save downloaded dependency sources before C++ compilation: even a failed
+      # compiler/linker stage should not force a full dependency download again.
+      - name: Save CPM source cache for next build
+        if: steps.cpm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .cache/cpm
+          key: cpmsrc-win2022-uwp-v1-${{ hashFiles('CMakeLists.txt', 'CMakePresets.json', 'CMakeModules/**/*.cmake', 'externals/CMakeLists.txt') }}
+
+      - name: Build Eden UWP frontend
+        shell: cmd
+        run: call tools\xbox\build-env.bat cmake --build --preset uwp-x64 --target eden-uwp --parallel 2
+
+      - name: Upload unsigned diagnostic EXE (not an installable package)
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eden-uwp-x64-unsigned-diagnostic
+          path: |
+            build-uwp/bin/eden-uwp.exe
+            build-uwp/bin/*.dll
+          if-no-files-found: error
+          retention-days: 7
+
+      # The complete Mesa UWP shader translator was already compiled and
+      # validated in run 38597070329. Reuse it rather than waiting for Mesa
+      # to rebuild alongside the diagnostic core each time.
+      - name: Download validated DXIL shader DLLs from successful APPX
+        uses: actions/download-artifact@v4
+        with:
+          name: Eden-Xbox-Diagnostic-Shader-Fixed-APPX
+          run-id: 38597070329
+          repository: kuaan08/Switch
+          github-token: ${{ github.token }}
+          path: staging-validated
+
+      - name: Extract validated spirv_to_dxil.dll from APPX
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Add-Type -AssemblyName System.IO.Compression
+          $package = Get-ChildItem staging-validated -Recurse -Filter eden-xbox-diagnostic.appx | Select-Object -First 1
+          if (!$package) { throw 'Missing validated shader-enabled APPX artifact' }
+          $appx = [System.IO.Compression.ZipFile]::OpenRead($package.FullName)
+          try {
+            $entry = $appx.GetEntry('spirv_to_dxil.dll')
+            if (!$entry) { throw 'Validated APPX has no spirv_to_dxil.dll' }
+            [System.IO.Compression.ZipFileExtensions]::ExtractToFile(
+              $entry, (Join-Path (Resolve-Path 'build-uwp/bin').Path 'spirv_to_dxil.dll'), $true)
+          } finally { $appx.Dispose() }
+          Write-Host "Recovered translator SHA256: $((Get-FileHash 'build-uwp/bin/spirv_to_dxil.dll').Hash)"
+
+      - name: Build diagnostic APPX with SM5.0/DXBC graphics probe
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./tools/xbox/package-appx.ps1 -Variant diagnostic -Library -Profile on -ShaderModelProbe -RequireGpuShaders `
+            -SpirvToDxil 'build-uwp/bin/spirv_to_dxil.dll' `
+            -BuildDir build-uwp -OutDir 'build-uwp/package/sm5probe'
+          if (!(Test-Path 'build-uwp/package/sm5probe/eden-xbox-diagnostic.appx')) {
+            throw 'Missing SM5 probe diagnostic APPX'
+          }
+
+      - name: Verify shader probe and both D3D12 libraries in APPX
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Add-Type -AssemblyName System.IO.Compression
+          $file = (Resolve-Path 'build-uwp/package/sm5probe/eden-xbox-diagnostic.appx').Path
+          $zip = [System.IO.Compression.ZipFile]::OpenRead($file)
+          try {
+            $items = @($zip.Entries | ForEach-Object FullName)
+            foreach ($name in @('eden-uwp.exe', 'spirv_to_dxil.dll', 'dxil.dll',
+                                 'eden_probe_vs.cso', 'eden_probe_ps.cso', 'AppxManifest.xml')) {
+              if ($items -notcontains $name) { throw "Missing $name from SM5 diagnostic APPX" }
+            }
+          } finally { $zip.Dispose() }
+          Write-Host "SM5 probe APPX complete and signed: $((Get-FileHash $file).Hash)"
+
+      - name: Upload installable Xbox One Shader Model probe diagnostic
+        uses: actions/upload-artifact@v4
+        with:
+          name: Eden-Xbox-OneFat-SM5-DXBC-Probe-APPX
+          path: |
+            build-uwp/package/sm5probe/eden-xbox-diagnostic.appx
+            build-uwp/package/sm5probe/eden-xbox.cer
+            build-uwp/package/sm5probe/Microsoft.VCLibs.x64.14.00.appx
+          if-no-files-found: error
+          retention-days: 14
