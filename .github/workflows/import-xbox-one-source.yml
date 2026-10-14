@@ -70,8 +70,14 @@ jobs:
           git -C source config user.name "github-actions[bot]"
           git -C source config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git -C source add -A
-          git -C source commit -m "port: migrate entire Xbox One UWP emulator source"
+          # Checkout from the other repository was shallow. Pushing that commit
+          # across repositories makes GitHub ask for absent parent objects.
+          # Publish a single fully self-contained root snapshot instead.
+          git -C source checkout --orphan one-eden-main
+          git -C source add -A
+          git -C source commit -m "Initial complete Eden Xbox One source with SM5.1 backend"
           echo "Tracked files: $(git -C source ls-files | wc -l)"
+          echo "Parent commits: $(git -C source rev-list --parents -n 1 HEAD)"
       - name: Push complete source to one-eden main
         shell: bash
         env:
