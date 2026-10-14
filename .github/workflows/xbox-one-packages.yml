@@ -1,0 +1,165 @@
+name: Legacy APPX package variants (manual only)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  package:
+    name: Pack both UWP variants
+    runs-on: windows-2022
+    timeout-minutes: 100
+    steps:
+      - name: Checkout Xbox source and packaging tools
+        uses: actions/checkout@v4
+
+      # Reuse the most recent VERIFIED successful UWP x64 build. Package-only
+      # jobs should not waste ~1 hour rebuilding 1,781 native compilation units.
+      - name: Download verified UWP executable
+        uses: actions/download-artifact@v4
+        with:
+          name: eden-uwp-x64-unsigned-diagnostic
+          run-id: 38510035231
+          repository: kuaan08/Switch
+          github-token: ${{ github.token }}
+          path: build-uwp/bin
+
+      - name: Validate UWP executable
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = 'build-uwp/bin/eden-uwp.exe'
+          if (!(Test-Path $exe)) { throw "Missing expected UWP executable $exe" }
+          Write-Host "Source executable SHA256: $((Get-FileHash $exe -Algorithm SHA256).Hash)"
+          Write-Host "Source compiled from commit: 29d1bdcc31fba4fbd574c76d2a7bc5ab7d43b1dd"
+
+      # Retry/resume Mesa source downloads: the initial GitHub-hosted Windows
+      # runner connection to archive.mesa3d.org was reset mid-download.
+      - name: Restore verified Mesa source archive
+        id: mesa-source-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: mesa-build/mesa-26.2.3.tar.xz
+          key: mesa-sources-26.2.3-sha256-1628058a
+
+      - name: Download and verify Mesa 26.2.3 source (resumable)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Path 'mesa-build' -Force | Out-Null
+          $archive = 'mesa-build/mesa-26.2.3.tar.xz'
+          $url = 'https://archive.mesa3d.org/mesa-26.2.3.tar.xz'
+          $expected = '1628058a8d2c0615975de5a15ab7bbb9638c50000b5bed9456ff423ea034a81f'
+          $verified = $false
+          for ($attempt = 1; $attempt -le 6; $attempt++) {
+            if (Test-Path $archive) {
+              $hash = (Get-FileHash -Path $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+              if ($hash -eq $expected) { $verified = $true; break }
+            }
+            Write-Host "Mesa source download attempt $attempt / 6 (resume enabled)"
+            & curl.exe --location --fail --retry 3 --retry-all-errors --retry-delay 5 --connect-timeout 30 --max-time 300 --continue-at - --output $archive $url
+            if (Test-Path $archive) {
+              $hash = (Get-FileHash -Path $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+              if ($hash -eq $expected) { $verified = $true; break }
+            }
+            if ($attempt -lt 6) { Start-Sleep -Seconds 8 }
+          }
+          if (!$verified) { throw 'Mesa source download or SHA256 validation failed' }
+          Write-Host "Verified official Mesa tarball SHA256: $expected"
+
+      - name: Cache verified Mesa source archive
+        if: steps.mesa-source-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: mesa-build/mesa-26.2.3.tar.xz
+          key: mesa-sources-26.2.3-sha256-1628058a
+
+      - name: Compile Mesa SPIR-V-to-DXIL UWP translator
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $mesaDir = Join-Path (Get-Location).Path 'mesa-build'
+          & ./tools/xbox/build-spirv-to-dxil.ps1 -WorkDir $mesaDir
+          if ($LASTEXITCODE -ne 0) { throw "Mesa build exited with $LASTEXITCODE" }
+          $translator = Join-Path $mesaDir 'build-uwp/src/microsoft/spirv_to_dxil/spirv_to_dxil.dll'
+          if (!(Test-Path $translator)) { throw 'Mesa shader translator DLL was not produced' }
+          $dumpbin = Get-Command dumpbin.exe -ErrorAction SilentlyContinue
+          if ($dumpbin) {
+            # dumpbin emits many lines. PowerShell -notmatch on a collection returns
+            # every nonmatching line (truthy) even when the export exists.
+            # Join first, then perform a single scalar regex check.
+            $exports = (& $dumpbin.Source /nologo /exports $translator) -join "`n"
+            if ($LASTEXITCODE -ne 0) { throw 'dumpbin failed while reading Mesa DLL exports' }
+            if ($exports -notmatch '\beden_spirv_to_dxil_pipeline_v2\b') {
+              throw 'Mesa translator is missing required Eden shader pipeline v2 export'
+            }
+            Write-Host 'Verified Eden shader pipeline v2 export.'
+          }
+          Write-Host "Shader DLL SHA256: $((Get-FileHash $translator -Algorithm SHA256).Hash)"
+
+      - name: Package normal (profiling off)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./tools/xbox/package-appx.ps1 -Variant normal -Library -BuildDir build-uwp -OutDir 'build-uwp/package/normal' -SpirvToDxil 'mesa-build/build-uwp/src/microsoft/spirv_to_dxil/spirv_to_dxil.dll' -RequireGpuShaders
+          if (!(Test-Path 'build-uwp/package/normal/eden-xbox-normal.appx')) { throw 'Missing normal APPX' }
+
+      - name: Package diagnostic (sampling profiler enabled)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./tools/xbox/package-appx.ps1 -Variant diagnostic -Library -Profile on -BuildDir build-uwp -OutDir 'build-uwp/package/diagnostic' -SpirvToDxil 'mesa-build/build-uwp/src/microsoft/spirv_to_dxil/spirv_to_dxil.dll' -RequireGpuShaders
+          if (!(Test-Path 'build-uwp/package/diagnostic/eden-xbox-diagnostic.appx')) { throw 'Missing diagnostic APPX' }
+
+      - name: Inspect both signed APPX packages
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $sdkBin = "${env:ProgramFiles(x86)}\Windows Kits\10\bin"
+          $makeappx = Get-ChildItem $sdkBin -Recurse -Filter MakeAppx.exe -ErrorAction SilentlyContinue |
+            Where-Object { $_.DirectoryName -like '*\x64' } |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          if (!$makeappx) { throw 'MakeAppx.exe missing' }
+          foreach ($variant in @('normal', 'diagnostic')) {
+            $appx = "build-uwp/package/$variant/eden-xbox-$variant.appx"
+            & $makeappx.FullName unpack /p $appx /d "build-uwp/verify-$variant" /o
+            if ($LASTEXITCODE -ne 0) { throw "APPX unpack failed for $variant" }
+            [xml]$m = Get-Content "build-uwp/verify-$variant/AppxManifest.xml"
+            $identity = $m.Package.Identity
+            Write-Host "$variant => $($identity.Name) x64, publisher $($identity.Publisher)"
+            if ($identity.ProcessorArchitecture -ne 'x64') { throw 'Wrong CPU architecture' }
+            $config = Get-Content "build-uwp/verify-$variant/boot.cfg" -Raw
+            if ($config -notmatch 'library=1') { throw "$variant lacks library mode" }
+            if ($variant -eq 'normal' -and $config -match 'profile=') { throw 'Normal package contains profiler options' }
+            if ($variant -eq 'diagnostic' -and $config -notmatch 'profile=1') { throw 'Diagnostic package lacks profiler options' }
+            if (!(Test-Path "build-uwp/verify-$variant/eden-uwp.exe")) { throw "$variant lacks executable" }
+            foreach ($dll in @('spirv_to_dxil.dll', 'dxil.dll')) {
+              if (!(Test-Path "build-uwp/verify-$variant/$dll")) { throw "$variant lacks required shader library $dll" }
+            }
+            Write-Host "$variant verified. SHA256: $((Get-FileHash $appx -Algorithm SHA256).Hash)"
+          }
+
+      - name: Upload normal APPX + certificate + runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: Eden-Xbox-UWP-Normal-APPX
+          path: |
+            build-uwp/package/normal/eden-xbox-normal.appx
+            build-uwp/package/normal/eden-xbox.cer
+            build-uwp/package/normal/Microsoft.VCLibs.x64.14.00.appx
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload diagnostic APPX + certificate + runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: Eden-Xbox-UWP-Diagnostic-APPX
+          path: |
+            build-uwp/package/diagnostic/eden-xbox-diagnostic.appx
+            build-uwp/package/diagnostic/eden-xbox.cer
+            build-uwp/package/diagnostic/Microsoft.VCLibs.x64.14.00.appx
+          if-no-files-found: error
+          retention-days: 7
