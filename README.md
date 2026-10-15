@@ -213,6 +213,39 @@ needed; never distribute keys or game dumps.
 and FPS in both variants, and only use the diagnostic variant for logs of
 *A Short Hike* if it still exits.
 
+## Update notifications and GitHub Releases
+
+The Xbox One UWP frontend has **Settings → System → Check for updates** and
+**Check updates on startup** (enabled by default, optional). Checks run on a
+background thread and read only the official public
+[GitHub Releases](https://github.com/kuaan08/one-eden/releases) feed. They
+compare the **installed APPX identity version** to published version tags
+(`xbox-one-dev-0.2.88.RUN`), and only propose a release that already
+contains both the normal and diagnostic APPX files.
+
+The Xbox One developer build **does not silently download or install APPXs**.
+When notified, open that Releases page on another device, download the
+appropriate APPX and included public `eden-xbox.cer`, then install through
+Xbox Device Portal. This is an experimental UWP sideload workflow, not
+Microsoft Store automatic updating.
+
+### Known constraints
+
+- CI builds have different **normal** and **diagnostic** UWP identities.
+  Keep the same variant if you want its existing LocalState to remain attached
+  to that identity.
+- The current CI fallback mints **self-signed certificates**, so a newer
+  package may require installing/trusting its certificate; seamless updating
+  requires a stable signing identity stored securely as a build secret.
+- A published version appears only after successful MSVC compilation, APPX
+  packaging, signing and GitHub Release publication. Failed Actions runs are
+  never advertised as installable updates.
+- The update checker can report network/rate-limit errors without stopping
+  the emulator. It never needs or uploads game dumps, firmware or keys.
+- Releases are tagged developer **pre-releases** until actual console testing
+  establishes compatibility; checking for an update is not proof the new build
+  performs better or resolves all 3D crashes.
+
 ## Installation on Xbox One
 
 **Requirements:** an original Xbox One in **Developer Mode**, access to the **Xbox Device Portal**, a signed **x64 APPX** from this project, the signing certificate/dependency packages when required, and your **own legally obtained game files, keys and firmware**.
