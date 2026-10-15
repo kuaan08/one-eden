@@ -243,10 +243,22 @@ if ($Variant -ne "default") {
     $mf.Save($stagedManifest)
     Write-Host "variant  : $Variant ($identityName)"
 }
-# The checked-in manifest is a stable development baseline. CI builds must have
-# monotonically increasing versions or Xbox deployment can keep the old package.
+# The repository manifest stays at its baseline. CI versions each package so the
+# console can reliably replace an existing installation while retaining LocalState.
 if ($PackageVersion) {
-    if ($PackageVersion -notmatch '^\d{1,5}\.\d{1,5}\.\d{1,5}\.\d{1,5}
+    $parts = $PackageVersion.Split('.')
+    if ($parts.Count -ne 4) { throw "APPX version needs four numeric components." }
+    foreach ($part in $parts) {
+        if ($part -notmatch '^[0-9]+$') { throw "APPX version contains non-numeric components." }
+        if ([long]$part -gt 65535) { throw "APPX version component exceeds 65535." }
+    }
+    $versionIdentity = $mf.SelectSingleNode("/*[local-name()='Package']/*[local-name()='Identity']")
+    if (-not $versionIdentity) { throw "APPX manifest Identity not found." }
+    $versionIdentity.SetAttribute("Version", $PackageVersion)
+    $mf.Save($stagedManifest)
+    Write-Host "appx version: $PackageVersion"
+}
+# Publisher must match the signing certificate's subject.
 if ($mf.Package.Identity.Publisher -ne $PublisherCN) {
     throw "Publisher mismatch: manifest has '$($mf.Package.Identity.Publisher)' but signing with '$PublisherCN'."
 }
