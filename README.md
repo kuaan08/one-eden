@@ -141,6 +141,54 @@ The original Eden Xbox frontend supplies a controller-friendly game library, art
 
 Core/frontend code lives under `src/eden_uwp/` and includes game management, controllers, settings, localizations and UWP boot handling. Some options are inherited from upstream and may not be functional for all games on the Xbox One; please report behavior based on actual console tests.
 
+## Localization, themes and experimental graphics settings
+
+The native UWP frontend currently includes **English, Spanish and Brazilian Portuguese
+(pt-BR)**. All 469 catalog entries are translated for the Portuguese-Brazil interface.
+Interface language and the emulated Nintendo Switch game language are separate choices:
+games only display a language if their own files support it.
+
+Go to **Settings → System** to choose:
+
+| Option | Available modes | When applied |
+| --- | --- | --- |
+| Interface language | Automatic, English, Español, Português (Brasil) | Immediately |
+| Game language and region | Auto or supported Switch languages/regions | Restart the **game** |
+| Visual theme | Eden, Xbox green, AMOLED black | Immediately |
+| Performance statistics | On/Off | Immediately |
+| Experimental 3D depth fix | On/Off (committed D3D12 depth textures for SM5.1) | Restart the **game** |
+| Clear library cache | Clear covers/titles metadata | Immediately |
+
+The experimental depth fix defaults to **On**, matching the earlier Xbox One
+SM5.1 compatibility test. It is an *unverified* workaround for the
+*A Short Hike* crash. Turn it Off to compare the previous pooled allocation
+method. More dedicated textures can increase memory consumption; this is not
+an FPS improvement.
+
+In the in-game image upscaling menu, select **Pixel art · nearest (2D)** for
+actual D3D12 point sampling at the final blit instead of bilinear blending.
+This preserves sharp edges for pixel art. Bilinear and FSR 1 remain selectable.
+This changes image appearance; any FPS increase is **unverified**.
+
+### Two package variants
+
+The [current Xbox One UWP build workflow](https://github.com/kuaan08/one-eden/actions/workflows/xbox-one-uwp.yml)
+produces separate installable packages after successful build and signing:
+
+- **Eden-Xbox-OneFat-Gameplay-NoProfiler-APPX:** normal Game package without
+  the diagnostic sampling profiler, for performance comparisons.
+- **Eden-Xbox-OneFat-SM5-DXBC-Orientation-Fix-APPX:** diagnostic package with
+  CPU/GPU sampling and the reproducible 3D-crash instrumentation.
+
+Both use the corrected vertically oriented SM5.1 GPU presentation code.
+Because these are different UWP package identities, their LocalState game
+configuration and library entries are **separate**. Import your own data as
+needed; never distribute keys or game dumps.
+
+**Build success is not hardware validation.** Compare *Sonic Mania* image quality
+and FPS in both variants, and only use the diagnostic variant for logs of
+*A Short Hike* if it still exits.
+
 ## Installation on Xbox One
 
 **Requirements:** an original Xbox One in **Developer Mode**, access to the **Xbox Device Portal**, a signed **x64 APPX** from this project, the signing certificate/dependency packages when required, and your **own legally obtained game files, keys and firmware**.
