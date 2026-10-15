@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2026 JulianDr14
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "eden_uwp/ui_painter.h"
+#include "eden_uwp/ui_theme.h"
 
 #include <array>
 #include <winrt/base.h>
@@ -14,7 +15,7 @@ void UiPainter::Attach(ID2D1RenderTarget* target, IDWriteFactory* write_) {
     surface = target;
     write = write_;
     brush.Reset();
-    winrt::check_hresult(surface->CreateSolidColorBrush(D2D1::ColorF(Palette::Text), &brush));
+    winrt::check_hresult(surface->CreateSolidColorBrush(D2D1::ColorF(ThemeColor(Palette::Text)), &brush));
 }
 
 void UiPainter::SyncLanguage() {
@@ -26,7 +27,7 @@ void UiPainter::SyncLanguage() {
 }
 
 void UiPainter::Round(float x, float y, float w, float h, float radius, unsigned color) {
-    brush->SetColor(D2D1::ColorF(color));
+    brush->SetColor(D2D1::ColorF(ThemeColor(color)));
     surface->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x, y, x + w, y + h), radius, radius),
                                   brush.Get());
 }
@@ -56,7 +57,7 @@ IDWriteTextFormat* UiPainter::Format(float size, bool bold, bool wrap, bool cent
 
 void UiPainter::Text(std::wstring_view text, float x, float y, float size, unsigned color,
                      float width, float height, bool bold, bool wrap, bool center, bool trailing) {
-    brush->SetColor(D2D1::ColorF(color));
+    brush->SetColor(D2D1::ColorF(ThemeColor(color)));
     surface->DrawText(text.data(), static_cast<UINT32>(text.size()),
                       Format(size, bold, wrap, center, trailing),
                       D2D1::RectF(x, y, x + width, y + height), brush.Get(),
@@ -75,7 +76,7 @@ float UiPainter::MeasureText(std::wstring_view text, float size, bool bold) {
 }
 
 void UiPainter::Icon(UiIcon icon, float x, float y, unsigned color) {
-    brush->SetColor(D2D1::ColorF(color));
+    brush->SetColor(D2D1::ColorF(ThemeColor(color)));
     const auto line = [&](float ax, float ay, float bx, float by) {
         surface->DrawLine(D2D1::Point2F(x + ax, y + ay), D2D1::Point2F(x + bx, y + by), brush.Get(), 2);
     };
@@ -166,7 +167,7 @@ void UiPainter::Icon(UiIcon icon, float x, float y, unsigned color) {
 }
 
 void UiPainter::Chevron(float cx, float cy, unsigned color, bool left) {
-    brush->SetColor(D2D1::ColorF(color));
+    brush->SetColor(D2D1::ColorF(ThemeColor(color)));
     const float d = left ? -1.0f : 1.0f;
     surface->DrawLine(D2D1::Point2F(cx - 4 * d, cy - 5), D2D1::Point2F(cx + 1 * d, cy), brush.Get(), 2);
     surface->DrawLine(D2D1::Point2F(cx + 1 * d, cy), D2D1::Point2F(cx - 4 * d, cy + 5), brush.Get(), 2);
@@ -179,7 +180,7 @@ void UiPainter::ScrollIndicator(float x, float y, float height, std::size_t firs
     const bool above = first > 0;
     const bool below = more_below || visible < count - first;
     const auto arrow = [&](float cy, bool up, bool available) {
-        brush->SetColor(D2D1::ColorF(available ? Palette::Accent : Palette::Track));
+        brush->SetColor(D2D1::ColorF(ThemeColor(available ? Palette::Accent : Palette::Track)));
         const float tip = cy + (up ? -3.0f : 3.0f);
         const float base = cy + (up ? 3.0f : -3.0f);
         surface->DrawLine(D2D1::Point2F(x - 4, base), D2D1::Point2F(x, tip), brush.Get(), 2);
@@ -212,17 +213,17 @@ void UiPainter::PageHeader(float x, float y, UiIcon icon, std::wstring_view titl
 void UiPainter::Switch(float x, float y, bool on, bool active) {
     Round(x, y, 52, 28, 14, on ? Palette::Accent : Palette::Track);
     if (active && !on) {
-        brush->SetColor(D2D1::ColorF(Palette::TextSecondary));
+        brush->SetColor(D2D1::ColorF(ThemeColor(Palette::TextSecondary)));
         surface->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x, y, x + 52, y + 28), 14, 14),
                                       brush.Get(), 1.5f);
     }
     const float knob = on ? x + 38 : x + 14;
-    brush->SetColor(D2D1::ColorF(on ? Palette::OnAccent : Palette::Text));
+    brush->SetColor(D2D1::ColorF(ThemeColor(on ? Palette::OnAccent : Palette::Text)));
     surface->FillEllipse(D2D1::Ellipse(D2D1::Point2F(knob, y + 14), 10, 10), brush.Get());
 }
 
 void UiPainter::ButtonGlyph(std::wstring_view letters, float x, float y, unsigned color) {
-    brush->SetColor(D2D1::ColorF(color));
+    brush->SetColor(D2D1::ColorF(ThemeColor(color)));
     if (letters.size() > 1) {
         surface->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x, y + 5, x + 38, y + 27), 8, 8),
                                       brush.Get(), 2);
