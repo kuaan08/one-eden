@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2026 JulianDr14
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "eden_uwp/game_menu_surface.h"
+#include "eden_uwp/ui_theme.h"
 
 #include <algorithm>
 #include <cmath>
