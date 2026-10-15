@@ -265,8 +265,10 @@ std::optional<std::string> ShowGameLibrary(void* core_window, unsigned width, un
                 x < L::RowX + L::RowWidth) {
                 actions |= Quit;
             } else if (x >= L::RowX && x < L::RowX + L::RowWidth && y >= L::RowTop) {
-                const auto row = static_cast<size_t>((y - L::RowTop) / L::RowStride);
-                if (row < SystemPage::RowCount && y < L::RowTop + row * L::RowStride + L::RowHeight) {
+                const auto display_row = static_cast<size_t>((y - L::RowTop) / L::RowStride);
+                const auto row = L::FirstRow(system_page.selected) + display_row;
+                if (display_row < L::VisibleRows && row < SystemPage::RowCount &&
+                    y < L::RowTop + display_row * L::RowStride + L::RowHeight) {
                     system_page.selected = row;
                     actions |= Play;
                     dirty = true;
@@ -444,7 +446,9 @@ std::optional<std::string> ShowGameLibrary(void* core_window, unsigned width, un
         case SystemPageEffect::NameDone: {
             const bool saved = SaveSystemSettings(system_page.settings);
             const auto resolved = ApplySystemSettings();
-            system_page.notice = Tr(saved ? T::SettingsSaved : T::SystemSaveFailed);
+            system_page.notice = Tr(saved ? (system_page.selected == SystemPage::XboxDepthFix ?
+                                            T::RestartGameToApply : T::SettingsSaved)
+                                          : T::SystemSaveFailed);
             system_notice_until = saved ? now + std::chrono::seconds{3} : std::chrono::steady_clock::time_point::max();
             if (resolved.game_language != title_language) {
                 title_language = resolved.game_language;
