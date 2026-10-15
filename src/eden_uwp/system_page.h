@@ -18,7 +18,9 @@ namespace EdenXbox {
 
 struct SystemPage {
     enum Row : std::size_t { UserName, InterfaceLanguage, GameLanguage, Region,
-    UiThemeChoice, XboxDepthFix, AdultMods, PerformanceStats, PulseSessions, ClearCache, RowCount };
+    UiThemeChoice, XboxDepthFix, PerfPreset, InternalResolution, FastmemMode,
+    DisplayFrameSkip, DiskShaderCache, SpeedCap, AdultMods, PerformanceStats,
+    PulseSessions, ClearCache, RowCount };
 
     bool open{};
     std::size_t selected{};
@@ -92,6 +94,29 @@ inline SystemPageEffect HandleSystemInput(SystemPage& page, SystemInput input) {
     case Row::XboxDepthFix:
         settings.xbox_dedicated_depth = !settings.xbox_dedicated_depth;
         return SystemPageEffect::Changed;
+    case Row::PerfPreset:
+        ApplyXboxPreset(settings, StepXboxPreset(settings.xbox_preset, back));
+        return SystemPageEffect::Changed;
+    case Row::InternalResolution:
+        settings.xbox_resolution = StepXboxResolution(settings.xbox_resolution, back);
+        settings.xbox_preset = XboxPreset::Custom;
+        return SystemPageEffect::Changed;
+    case Row::FastmemMode:
+        settings.xbox_fastmem = settings.xbox_fastmem == XboxFastmem::Off ? XboxFastmem::Hybrid : XboxFastmem::Off;
+        settings.xbox_preset = XboxPreset::Custom;
+        return SystemPageEffect::Changed;
+    case Row::DisplayFrameSkip:
+        settings.xbox_frame_skip = StepXboxFrameSkip(settings.xbox_frame_skip, back);
+        settings.xbox_preset = XboxPreset::Custom;
+        return SystemPageEffect::Changed;
+    case Row::DiskShaderCache:
+        settings.xbox_disk_shader_cache = !settings.xbox_disk_shader_cache;
+        settings.xbox_preset = XboxPreset::Custom;
+        return SystemPageEffect::Changed;
+    case Row::SpeedCap:
+        settings.xbox_speed_cap = !settings.xbox_speed_cap;
+        settings.xbox_preset = XboxPreset::Custom;
+        return SystemPageEffect::Changed;
     case Row::AdultMods:
         settings.show_adult_mods = !settings.show_adult_mods;
         return SystemPageEffect::Changed;
@@ -136,6 +161,12 @@ inline I18n::Text SystemRowTitle(SystemPage::Row row) {
     case SystemPage::Region:            return Text::ConsoleRegion;
     case SystemPage::UiThemeChoice:     return Text::ThemeTitle;
     case SystemPage::XboxDepthFix:      return Text::XboxDepthFixTitle;
+    case SystemPage::PerfPreset:        return Text::PerfPresetTitle;
+    case SystemPage::InternalResolution:return Text::InternalResolutionTitle;
+    case SystemPage::FastmemMode:       return Text::FastmemTitle;
+    case SystemPage::DisplayFrameSkip:  return Text::DisplaySkipTitle;
+    case SystemPage::DiskShaderCache:   return Text::DiskCacheTitle;
+    case SystemPage::SpeedCap:          return Text::SpeedCapTitle;
     case SystemPage::PerformanceStats:  return Text::PerformanceStats;
     case SystemPage::AdultMods:         return Text::ModsAdult;
     case SystemPage::PulseSessions:     return Text::PulseSessions;
@@ -152,6 +183,12 @@ inline I18n::Text SystemRowHint(SystemPage::Row row) {
     case SystemPage::Region:            return Text::ConsoleRegionHint;
     case SystemPage::UiThemeChoice:     return Text::ThemeHint;
     case SystemPage::XboxDepthFix:      return Text::XboxDepthFixHint;
+    case SystemPage::PerfPreset:        return Text::PerfPresetHint;
+    case SystemPage::InternalResolution:return Text::InternalResolutionHint;
+    case SystemPage::FastmemMode:       return Text::FastmemHint;
+    case SystemPage::DisplayFrameSkip:  return Text::DisplaySkipHint;
+    case SystemPage::DiskShaderCache:   return Text::DiskCacheHint;
+    case SystemPage::SpeedCap:          return Text::SpeedCapHint;
     case SystemPage::PerformanceStats:  return Text::PerformanceStatsHint;
     case SystemPage::AdultMods:         return Text::ModsAdultHint;
     case SystemPage::PulseSessions:     return Text::PulseSessionsHint;
@@ -184,6 +221,24 @@ inline std::wstring SystemRowValue(const SystemPage& page, SystemPage::Row row) 
             settings.ui_theme == UiTheme::Amoled ? Text::ThemeAmoled : Text::ThemeEden)};
     case SystemPage::XboxDepthFix:
         return std::wstring{I18n::Tr(settings.xbox_dedicated_depth ? Text::Yes : Text::No)};
+    case SystemPage::PerfPreset:
+        return std::wstring{I18n::Tr(settings.xbox_preset == XboxPreset::Balanced ? Text::PerfPresetBalanced :
+            settings.xbox_preset == XboxPreset::TwoD ? Text::PerfPreset2D :
+            settings.xbox_preset == XboxPreset::Experimental3D ? Text::PerfPreset3D : Text::PerfPresetCustom)};
+    case SystemPage::InternalResolution:
+        return std::wstring{I18n::Tr(settings.xbox_resolution == Settings::ResolutionSetup::Res1_2X ?
+            Text::InternalResolution50 : settings.xbox_resolution == Settings::ResolutionSetup::Res3_4X ?
+            Text::InternalResolution75 : Text::InternalResolution100)};
+    case SystemPage::FastmemMode:
+        return std::wstring{I18n::Tr(settings.xbox_fastmem == XboxFastmem::Hybrid ? Text::FastmemHybrid : Text::FastmemOff)};
+    case SystemPage::DisplayFrameSkip:
+        return std::wstring{I18n::Tr(settings.xbox_frame_skip == XboxFrameSkip::Half ?
+            Text::DisplaySkipHalf : settings.xbox_frame_skip == XboxFrameSkip::Third ?
+            Text::DisplaySkipThird : Text::DisplaySkipOff)};
+    case SystemPage::DiskShaderCache:
+        return std::wstring{I18n::Tr(settings.xbox_disk_shader_cache ? Text::Yes : Text::No)};
+    case SystemPage::SpeedCap:
+        return std::wstring{I18n::Tr(settings.xbox_speed_cap ? Text::Yes : Text::No)};
     case SystemPage::PerformanceStats:
         return std::wstring{I18n::Tr(settings.show_performance_stats ? Text::Yes : Text::No)};
     case SystemPage::AdultMods:

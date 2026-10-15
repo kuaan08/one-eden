@@ -446,7 +446,12 @@ std::optional<std::string> ShowGameLibrary(void* core_window, unsigned width, un
         case SystemPageEffect::NameDone: {
             const bool saved = SaveSystemSettings(system_page.settings);
             const auto resolved = ApplySystemSettings();
-            system_page.notice = Tr(saved ? (system_page.selected == SystemPage::XboxDepthFix ?
+            system_page.notice = Tr(saved ? ((system_page.selected == SystemPage::XboxDepthFix ||
+                                             system_page.selected == SystemPage::PerfPreset ||
+                                             system_page.selected == SystemPage::InternalResolution ||
+                                             system_page.selected == SystemPage::FastmemMode ||
+                                             system_page.selected == SystemPage::DiskShaderCache ||
+                                             system_page.selected == SystemPage::SpeedCap) ?
                                             T::RestartGameToApply : T::SettingsSaved)
                                           : T::SystemSaveFailed);
             system_notice_until = saved ? now + std::chrono::seconds{3} : std::chrono::steady_clock::time_point::max();

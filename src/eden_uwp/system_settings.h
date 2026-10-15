@@ -48,6 +48,26 @@ struct SystemSettings {
     bool operator==(const SystemSettings&) const = default;
 };
 
+// Presets change real renderer startup options. No preset promises higher
+// frame rates; CPU-bound 2D games can remain CPU-bound after downscaling.
+inline void ApplyXboxPreset(SystemSettings& s, XboxPreset preset) {
+    using R = Settings::ResolutionSetup;
+    s.xbox_preset = preset;
+    s.xbox_fastmem = XboxFastmem::Off;
+    s.xbox_frame_skip = XboxFrameSkip::Off;
+    s.xbox_disk_shader_cache = true;
+    s.xbox_speed_cap = true;
+    switch (preset) {
+    case XboxPreset::TwoD: s.xbox_resolution = R::Res3_4X; break;
+    case XboxPreset::Experimental3D:
+        s.xbox_resolution = R::Res1_2X;
+        s.xbox_dedicated_depth = true;
+        break;
+    case XboxPreset::Balanced: s.xbox_resolution = R::Res1X; break;
+    case XboxPreset::Custom: break;
+    }
+}
+
 /// What Windows reports: preferred languages in order ("es-CO", "en-US") and the home region as
 /// an ISO 3166 code ("CO"), which may be empty.
 struct SystemLocale {

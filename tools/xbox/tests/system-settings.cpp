@@ -96,6 +96,13 @@ int main() {
     check(page.settings.xbox_dedicated_depth);
     check(HandleSystemInput(page, SystemInput::Confirm) == SystemPageEffect::Changed &&
           !page.settings.xbox_dedicated_depth);
+    // New compatibility controls are between depth and AdultMods.
+    for (const auto expected : {SystemPage::PerfPreset, SystemPage::InternalResolution,
+                                SystemPage::FastmemMode, SystemPage::DisplayFrameSkip,
+                                SystemPage::DiskShaderCache, SystemPage::SpeedCap}) {
+        check(HandleSystemInput(page, SystemInput::Down) == SystemPageEffect::None);
+        check(page.selected == expected);
+    }
     check(HandleSystemInput(page, SystemInput::Down) == SystemPageEffect::None &&
           page.selected == SystemPage::AdultMods);
     check(SystemRowValue(page, SystemPage::AdultMods) == L"Ocultos");
