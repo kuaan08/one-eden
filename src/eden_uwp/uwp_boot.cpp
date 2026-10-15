@@ -394,6 +394,17 @@ int RunHeadlessBoot(const std::string& nro_path, const BootSurface& surface,
               std::to_string(std::chrono::duration<double, std::milli>(timer_resolution).count()) +
               " ms");
     ApplyHeadlessBootSettings(config.null_renderer ? BootSurface{} : surface);
+    // Snapshot per-game settings before Core constructs texture caches/JIT.
+    // Do NOT rescale an active framebuffer or remap active guest memory.
+    const auto xbox_perf = LoadSystemSettings();
+    Settings::values.resolution_setup.SetValue(xbox_perf.xbox_resolution);
+    Settings::UpdateRescalingInfo();
+    Settings::values.use_disk_shader_cache.SetValue(xbox_perf.xbox_disk_shader_cache);
+    Settings::values.use_speed_limit.SetValue(xbox_perf.xbox_speed_cap);
+    WriteDiag("Xbox performance: resolution=" +
+              std::to_string(static_cast<int>(xbox_perf.xbox_resolution)) +
+              ", cache=" + (xbox_perf.xbox_disk_shader_cache ? "on" : "off") +
+              ", speed cap=" + (xbox_perf.xbox_speed_cap ? "100%" : "uncapped"));
     if (config.null_audio) {
         Settings::values.sink_id = Settings::AudioEngine::Null;
     }
@@ -411,19 +422,22 @@ int RunHeadlessBoot(const std::string& nro_path, const BootSurface& surface,
     // resulting fastmem fault/recompile storm was markedly slower than the page table, so Auto
     // must take the safe path until a selective JIT/page-table fast path exists. Keep Hybrid and
     // Full as explicit diagnostics.
-    const bool fastmem_enabled = config.fastmem == BootConfig::Fastmem::Hybrid ||
-                                 config.fastmem == BootConfig::Fastmem::Full;
+    const auto xbox_fastmem = config.fastmem == BootConfig::Fastmem::Off &&
+                              xbox_perf.xbox_fastmem == XboxFastmem::Hybrid
+        ? BootConfig::Fastmem::Hybrid : config.fastmem;
+    const bool fastmem_enabled = xbox_fastmem == BootConfig::Fastmem::Hybrid ||
+                                 xbox_fastmem == BootConfig::Fastmem::Full;
     Settings::values.cpuopt_fastmem = fastmem_enabled;
     Settings::values.cpuopt_fastmem_exclusives = fastmem_enabled;
     Common::ConfigureHostMemoryFastmem(config.fastmem_hot_mib,
-                                       config.fastmem == BootConfig::Fastmem::Full);
+                                       xbox_fastmem == BootConfig::Fastmem::Full);
     // Keep the shared setting for other backends. D3D12 prepares on workers and always waits
     // for the exact PSO when a dependent draw reaches the command stream.
     Settings::values.use_asynchronous_shaders.SetValue(config.async_shaders);
     WriteDiag(std::string("step: fastmem ") +
-              (config.fastmem == BootConfig::Fastmem::Off      ? "off"
-               : config.fastmem == BootConfig::Fastmem::Auto   ? "auto -> page table"
-               : config.fastmem == BootConfig::Fastmem::Full   ? "full"
+              (xbox_fastmem == BootConfig::Fastmem::Off      ? "off"
+               : xbox_fastmem == BootConfig::Fastmem::Auto   ? "auto -> page table"
+               : xbox_fastmem == BootConfig::Fastmem::Full   ? "full"
                                                                : "hybrid diagnostic") +
               (fastmem_enabled ? " (hot " + std::to_string(config.fastmem_hot_mib) + " MiB)" : "") +
               ", D3D12 pipeline workers on, dependent draws preserved" +

@@ -19,6 +19,7 @@
 #include "video_core/gpu.h"
 #include "video_core/gpu_thread.h"
 #include "video_core/renderer_d3d12/renderer_d3d12.h"
+#include "video_core/renderer_d3d12/d3d12_present_skip.h"
 #include "video_core/renderer_d3d12/renderer_d3d12_internal.h"
 
 namespace D3D12 {
@@ -157,6 +158,10 @@ void RendererD3D12::Composite(std::span<const Tegra::FramebufferConfig> framebuf
         return;
     }
     last_framebuffer = framebuffers.front();
+    // Experimental display-frame skip. Guest GPU commands are NOT skipped.
+    static thread_local unsigned presentation_count = 0;
+    const unsigned interval = XboxPresentInterval();
+    if (interval > 1 && (presentation_count++ % interval) != 0) return;
     if (!present_failed) {
         try {
             if (std::optional<std::string> error = present_manager.TakeError()) {

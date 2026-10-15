@@ -19,6 +19,7 @@
 #include "eden_uwp/localization.h"
 #include "eden_uwp/upscaling.h"
 #include "eden_uwp/ui_theme.h"
+#include "eden_uwp/xbox_performance.h"
 
 namespace EdenXbox {
 
@@ -37,6 +38,12 @@ struct SystemSettings {
     Upscaling upscaling{Upscaling::Bilinear};         ///< Set from the in-game menu.
     UiTheme ui_theme{UiTheme::Eden};                   ///< Immediate frontend theme.
     bool xbox_dedicated_depth{true};                  ///< Requires starting a new game.
+    Settings::ResolutionSetup xbox_resolution{Settings::ResolutionSetup::Res1X};
+    XboxFastmem xbox_fastmem{XboxFastmem::Off};
+    XboxFrameSkip xbox_frame_skip{XboxFrameSkip::Off}; // presentation only
+    XboxPreset xbox_preset{XboxPreset::Balanced};
+    bool xbox_disk_shader_cache{true};
+    bool xbox_speed_cap{true};
 
     bool operator==(const SystemSettings&) const = default;
 };

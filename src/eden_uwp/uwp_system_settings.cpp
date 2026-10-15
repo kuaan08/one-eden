@@ -10,6 +10,7 @@
 #include "video_core/performance_overlay.h"
 #include "video_core/renderer_d3d12/d3d12_resource_allocator.h"
 #include "video_core/renderer_d3d12/d3d12_present_filter.h"
+#include "video_core/renderer_d3d12/d3d12_present_skip.h"
 #include "core/hle/service/acc/profile_manager.h"
 
 namespace EdenXbox {
@@ -24,6 +25,12 @@ constexpr auto PulseSessionsKey = L"system_pulse_sessions";
 constexpr auto UpscalingKey = L"system_upscaling";
 constexpr auto ThemeKey = L"system_ui_theme";
 constexpr auto DedicatedDepthKey = L"system_xbox_dedicated_depth";
+constexpr auto ResolutionKey = L"system_xbox_resolution";
+constexpr auto FastmemKey = L"system_xbox_fastmem";
+constexpr auto SkipKey = L"system_xbox_present_skip";
+constexpr auto PresetKey = L"system_xbox_preset";
+constexpr auto CacheKey = L"system_xbox_disk_shader_cache";
+constexpr auto SpeedKey = L"system_xbox_speed_cap";
 
 /// Saved as the enum's value, or -1 for "follow the system". A value that is not a selectable
 /// option (an older or newer build's) also falls back to the system.
@@ -65,6 +72,18 @@ SystemSettings LoadSystemSettings() {
             settings.ui_theme = UiThemeFromValue(winrt::unbox_value<int32_t>(values.Lookup(ThemeKey)));
         if (values.HasKey(DedicatedDepthKey))
             settings.xbox_dedicated_depth = winrt::unbox_value<bool>(values.Lookup(DedicatedDepthKey));
+        if (values.HasKey(ResolutionKey))
+            settings.xbox_resolution = SafeXboxResolution(winrt::unbox_value<int32_t>(values.Lookup(ResolutionKey)));
+        if (values.HasKey(FastmemKey))
+            settings.xbox_fastmem = SafeXboxFastmem(winrt::unbox_value<int32_t>(values.Lookup(FastmemKey)));
+        if (values.HasKey(SkipKey))
+            settings.xbox_frame_skip = SafeXboxFrameSkip(winrt::unbox_value<int32_t>(values.Lookup(SkipKey)));
+        if (values.HasKey(PresetKey))
+            settings.xbox_preset = SafeXboxPreset(winrt::unbox_value<int32_t>(values.Lookup(PresetKey)));
+        if (values.HasKey(CacheKey))
+            settings.xbox_disk_shader_cache = winrt::unbox_value<bool>(values.Lookup(CacheKey));
+        if (values.HasKey(SpeedKey))
+            settings.xbox_speed_cap = winrt::unbox_value<bool>(values.Lookup(SpeedKey));
     } catch (...) { /* Missing or invalid values keep following the system. */ }
     return settings;
 }
@@ -82,6 +101,12 @@ bool SaveSystemSettings(const SystemSettings& settings) {
         values.Insert(UpscalingKey, winrt::box_value(static_cast<int32_t>(settings.upscaling)));
         values.Insert(ThemeKey, winrt::box_value(static_cast<int32_t>(settings.ui_theme)));
         values.Insert(DedicatedDepthKey, winrt::box_value(settings.xbox_dedicated_depth));
+        values.Insert(ResolutionKey, winrt::box_value(static_cast<int32_t>(settings.xbox_resolution)));
+        values.Insert(FastmemKey, winrt::box_value(static_cast<int32_t>(settings.xbox_fastmem)));
+        values.Insert(SkipKey, winrt::box_value(static_cast<int32_t>(settings.xbox_frame_skip)));
+        values.Insert(PresetKey, winrt::box_value(static_cast<int32_t>(settings.xbox_preset)));
+        values.Insert(CacheKey, winrt::box_value(settings.xbox_disk_shader_cache));
+        values.Insert(SpeedKey, winrt::box_value(settings.xbox_speed_cap));
         return true;
     } catch (...) { return false; }
 }
@@ -105,6 +130,7 @@ ResolvedSystem ApplySystemSettings() {
     VideoCore::performance_overlay_enabled.store(settings.show_performance_stats, std::memory_order_relaxed);
     SetUiTheme(settings.ui_theme);
     D3D12::SetXboxDedicatedDepthEnabled(settings.xbox_dedicated_depth);
+    D3D12::SetXboxPresentInterval(XboxPresentInterval(settings.xbox_frame_skip));
     ApplyUpscaling(settings.upscaling);
     const auto resolved = ResolveSystem(settings, locale);
     I18n::SetUiLanguage(*resolved.ui_language);
