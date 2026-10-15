@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2026 JulianDr14
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "eden_uwp/uwp_library_canvas.h"
+#include "eden_uwp/ui_theme.h"
 #include "eden_uwp/pro_controller_geometry.h"
 
 #include <algorithm>
@@ -122,7 +123,7 @@ public:
         if (const auto active = SelectController(panel.devices, options.controller_id))
             swap_prompt_faces = SwapControllerFaceButtons(panel.devices[*active], options.swap_face_buttons);
         target->BeginDraw();
-        target->Clear(D2D1::ColorF(0x0b1018));
+        target->Clear(D2D1::ColorF(ThemeColor(0x0b1018)));
         if (logo) target->DrawBitmap(logo.Get(), D2D1::RectF(50, 38, 104, 92), 1,
                                      D2D1_INTERPOLATION_MODE_LINEAR);
         Text(L"eden", 120, 40, 32, 0xf4f7fa, 140, 48, true);
@@ -180,7 +181,7 @@ public:
         ControlPrompt(Navigation::Refresh, Tr(T::Refresh), 620, 654, 130);
         ControlPrompt(Navigation::Settings, Tr(T::Controller), 792, 654, 130);
         ControlPrompt(Navigation::Back, Tr(T::Exit), 1000, 654, 130);
-        brush->SetColor(D2D1::ColorF(0x738194));
+        brush->SetColor(D2D1::ColorF(ThemeColor(0x738194)));
         target->DrawTextLayout(D2D1::Point2F(1046, 690), version_layout.Get(), brush.Get(),
                                D2D1_DRAW_TEXT_OPTIONS_CLIP);
         if (!view.notice.empty()) Text(view.notice, 320, 316, 15, 0xe4bb83, 860, 22);
@@ -272,7 +273,7 @@ private:
         Text(Tr(T::KeyboardTitle), 120, 118, 28, 0xf4f7fa, 900, 44, true);
         Text(Tr(T::KeyboardSubtitle), 120, 166, 17, 0x91a3b8, 650, 30);
         Round(1120, 112, 48, 40, 10, 0x202c3c);
-        brush->SetColor(D2D1::ColorF(0xc5cfdb));
+        brush->SetColor(D2D1::ColorF(ThemeColor(0xc5cfdb)));
         target->DrawLine(D2D1::Point2F(1137, 125), D2D1::Point2F(1151, 139), brush.Get(), 2);
         target->DrawLine(D2D1::Point2F(1151, 125), D2D1::Point2F(1137, 139), brush.Get(), 2);
         Round(120, 210, 480, 342, 16, 0x182331);
@@ -303,7 +304,7 @@ private:
         }
         auto path = [&](size_t i, unsigned color) {
             brush->SetColor(D2D1::ColorF(color)); target->FillGeometry(controller_paths[i].Get(), brush.Get());
-            brush->SetColor(D2D1::ColorF(0x526478)); target->DrawGeometry(controller_paths[i].Get(), brush.Get(), 1.2f);
+            brush->SetColor(D2D1::ColorF(ThemeColor(0x526478))); target->DrawGeometry(controller_paths[i].Get(), brush.Get(), 1.2f);
         };
         const size_t action = editor.selected;
         path(1, 0x263445); path(2, 0x263445); path(0, 0x202c3b);
@@ -335,7 +336,7 @@ private:
         target->DrawLine(D2D1::Point2F(379, 330), D2D1::Point2F(384, 334), brush.Get(), 1.4f);
         target->DrawRectangle(D2D1::RectF(376, 334, 382, 339), brush.Get(), 1.2f);
         Round(314, 327, 14, 14, 3, action == 19 ? 0x77e3bd : 0x111b28);
-        brush->SetColor(D2D1::ColorF(0x91a3b8));
+        brush->SetColor(D2D1::ColorF(ThemeColor(0x91a3b8)));
         target->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(321, 334), 4, 4), brush.Get(), 1.2f);
         for (const auto i : {size_t{8}, size_t{9}}) {
             const auto tile = KeyboardDiagramTile(i);
@@ -580,7 +581,7 @@ private:
             // bitmap was Kenney's red color variant, not an application state.
             Round(x + 11, y + 3, 10, 26, 2, 0xf4f7fa);
             Round(x + 3, y + 11, 26, 10, 2, 0xf4f7fa);
-            brush->SetColor(D2D1::ColorF(0xf4f7fa));
+            brush->SetColor(D2D1::ColorF(ThemeColor(0xf4f7fa)));
             target->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(x + 56, y + 16), 13, 13), brush.Get(), 2);
             Text(L"L", x + 40, y, 16, 0xf4f7fa, 32, 32, true, false, true);
             Text(label, x + 80, y + 3, 19, color, width);
@@ -589,7 +590,7 @@ private:
         if (prompt_family == PromptFamily::Nintendo) {
             // Native D2D glyphs match Nintendo's monochrome A/B and minus/plus.
             // They reuse cached text formats and allocate no bitmap or path.
-            brush->SetColor(D2D1::ColorF(0xf4f7fa));
+            brush->SetColor(D2D1::ColorF(ThemeColor(0xf4f7fa)));
             const auto center = D2D1::Point2F(x + 16, y + 16);
             if (action == Navigation::Play || action == Navigation::Back) {
                 target->DrawEllipse(D2D1::Ellipse(center, 13, 13), brush.Get(), 2);
