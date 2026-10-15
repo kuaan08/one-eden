@@ -126,7 +126,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          & ./tools/xbox/package-appx.ps1 -Variant diagnostic -Library -Profile on -ShaderModelProbe `
+          & ./tools/xbox/package-appx.ps1 -Variant diagnostic -Library -Profile on -ShaderModelProbe -PackageVersion "0.2.88.$env:GITHUB_RUN_NUMBER" `
             -BuildDir build-uwp -OutDir 'build-uwp/package/sm5probe'
           if (!(Test-Path 'build-uwp/package/sm5probe/eden-xbox-diagnostic.appx')) {
             throw 'Missing Xbox One SM5.1 diagnostic APPX'
@@ -145,6 +145,13 @@ jobs:
                                  'eden_probe_ps.cso', 'AppxManifest.xml')) {
               if ($items -notcontains $name) { throw "Missing $name from Xbox One diagnostic APPX" }
             }
+            $manifestEntry = $zip.GetEntry('AppxManifest.xml')
+            $reader = [System.IO.StreamReader]::new($manifestEntry.Open())
+            try { [xml]$packedManifest = $reader.ReadToEnd() } finally { $reader.Dispose() }
+            $expectedVersion = "0.2.88.$env:GITHUB_RUN_NUMBER"
+            if ($packedManifest.Package.Identity.Version -ne $expectedVersion) {
+              throw "APPX identity version incorrect: expected $expectedVersion"
+            }
           } finally { $zip.Dispose() }
           Write-Host "Xbox One SM5.1 diagnostic APPX complete and signed: $((Get-FileHash $file).Hash)"
           Write-Host 'This APPX uses SPIRV-Cross -> HLSL -> DXBC. It does not require the old Mesa DXIL translator.'
@@ -156,7 +163,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          & ./tools/xbox/package-appx.ps1 -Variant normal -Library -ShaderModelProbe `
+          & ./tools/xbox/package-appx.ps1 -Variant normal -Library -ShaderModelProbe -PackageVersion "0.2.88.$env:GITHUB_RUN_NUMBER" `
             -BuildDir build-uwp -OutDir 'build-uwp/package/gameplay'
           if (!(Test-Path 'build-uwp/package/gameplay/eden-xbox-normal.appx')) {
             throw 'Missing Xbox One normal APPX'

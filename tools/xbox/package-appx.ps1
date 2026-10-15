@@ -55,6 +55,9 @@ param(
     # Windows SDK and ship them beside the executable for console PSO probes.
     # No DLL compiler is needed on the Xbox to execute the probe.
     [switch] $ShaderModelProbe,
+    # Override the package identity version. CI passes an increasing value so
+    # Device Portal can upgrade an existing installation (without deleting LocalState).
+    [string] $PackageVersion = "",
     [string] $OutDir = "build-uwp\package"
 )
 
@@ -239,6 +242,90 @@ if ($Variant -ne "default") {
     $visuals.SetAttribute("DisplayName", $displayName)
     $mf.Save($stagedManifest)
     Write-Host "variant  : $Variant ($identityName)"
+}
+# The checked-in manifest is a stable development baseline. CI builds must have
+# monotonically increasing versions or Xbox deployment can keep the old package.
+if ($PackageVersion) {
+    if ($PackageVersion -notmatch '^\d{1,5}\.\d{1,5}\.\d{1,5}\.\d{1,5}
+if ($mf.Package.Identity.Publisher -ne $PublisherCN) {
+    throw "Publisher mismatch: manifest has '$($mf.Package.Identity.Publisher)' but signing with '$PublisherCN'."
+}
+
+# --- 3. pack -----------------------------------------------------------------------------
+$makeappx = Find-SdkTool "MakeAppx.exe"
+$packageName = if ($Variant -eq "default") { "eden-xbox.appx" } else { "eden-xbox-$Variant.appx" }
+$appx = Join-Path $repo (Join-Path $OutDir $packageName)
+if (Test-Path $appx) { Remove-Item $appx -Force }
+# A bundled game dump is gigabytes of encrypted data that does not compress: skip compression.
+$packArgs = @("pack", "/d", $layout, "/p", $appx, "/o")
+if (Test-Path "$userdata\games") { $packArgs += "/nc" }
+& $makeappx @packArgs
+if ($LASTEXITCODE -ne 0) { throw "MakeAppx failed ($LASTEXITCODE)." }
+
+# --- 4. sign -----------------------------------------------------------------------------
+# Reuse a matching cert if one is already in the user store, else mint a self-signed one.
+$cert = Get-ChildItem Cert:\CurrentUser\My |
+        Where-Object { $_.Subject -eq $PublisherCN -and $_.NotAfter -gt (Get-Date) -and $_.HasPrivateKey } |
+        Select-Object -First 1
+if (-not $cert) {
+    Write-Host "minting a self-signed code-signing cert for $PublisherCN"
+    $cert = New-SelfSignedCertificate -Type Custom -Subject $PublisherCN `
+        -KeyUsage DigitalSignature -FriendlyName "Eden Xbox sideload" `
+        -CertStoreLocation "Cert:\CurrentUser\My" `
+        -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3", "2.5.29.19={text}")
+}
+
+$signtool = Find-SdkTool "SignTool.exe"
+& $signtool sign /fd SHA256 /sha1 $cert.Thumbprint /tr http://timestamp.digicert.com /td SHA256 $appx
+if ($LASTEXITCODE -ne 0) {
+    # Offline CI runners can fail timestamping. A locally signed development
+    # package is still useful; the certificate expires normally without a stamp.
+    Write-Warning "RFC3161 timestamp failed; retrying the developer signature without timestamp."
+    & $signtool sign /fd SHA256 /sha1 $cert.Thumbprint $appx
+    if ($LASTEXITCODE -ne 0) { throw "SignTool failed even without timestamp ($LASTEXITCODE)." }
+}
+
+# The console must trust the signer: upload this .cer alongside the appx in the Device Portal.
+$cer = Join-Path $repo "$OutDir\eden-xbox.cer"
+Export-Certificate -Cert $cert -FilePath $cer -Type CERT | Out-Null
+
+# --- 5. the VCLibs framework package ------------------------------------------------------
+# The exe hard-imports the Store CRT, which lives in the Microsoft.VCLibs.140.00 framework
+# package rather than ours (see the PackageDependency in the manifest). The console needs it
+# installed too, so hand it over next to our package instead of leaving the user to find it.
+# It ships with the VS "C++ (v143) UWP tools" component, as an Extension SDK.
+$vclibs = $null
+foreach ($pf in @(${env:ProgramFiles(x86)}, $env:ProgramFiles)) {
+    if (-not $pf) { continue }
+    $cand = Join-Path $pf "Microsoft SDKs\Windows Kits\10\ExtensionSDKs\Microsoft.VCLibs\14.0\Appx\Retail\x64\Microsoft.VCLibs.x64.14.00.appx"
+    if (Test-Path -LiteralPath $cand) { $vclibs = $cand; break }
+}
+if ($vclibs) {
+    $vcOut = Join-Path $repo "$OutDir\Microsoft.VCLibs.x64.14.00.appx"
+    Copy-Item -LiteralPath $vclibs -Destination $vcOut -Force
+} else {
+    Write-Warning ("Microsoft.VCLibs.x64.14.00.appx not found. The app will FAIL TO ACTIVATE on-console " +
+                   "without it. Install the VS component Microsoft.VisualStudio.ComponentGroup.UWP.VC.")
+}
+
+Write-Host ""
+Write-Host "package  : $appx"
+Write-Host "cert     : $cer"
+if ($vclibs) { Write-Host "framework: $vcOut  (upload as a dependency package)" }
+Write-Host "Next: Device Portal https://<xbox-ip>:11443 -> Add -> upload all of the above -> set the app to Game mode."
+) {
+        throw "Invalid APPX version '$PackageVersion' (expected four numeric fields)."
+    }
+    foreach ($part in $PackageVersion.Split('.')) {
+        if ([int]$part -gt 65535) {
+            throw "Invalid APPX version '$PackageVersion': each field must be <= 65535."
+        }
+    }
+    $versionIdentity = $mf.SelectSingleNode("/*[local-name()='Package']/*[local-name()='Identity']")
+    if (-not $versionIdentity) { throw "Identity missing in staged AppxManifest.xml." }
+    $versionIdentity.SetAttribute("Version", $PackageVersion)
+    $mf.Save($stagedManifest)
+    Write-Host "appx version: $PackageVersion"
 }
 # Publisher mismatch between manifest and cert is the #1 sideload rejection; fail loudly here.
 if ($mf.Package.Identity.Publisher -ne $PublisherCN) {
