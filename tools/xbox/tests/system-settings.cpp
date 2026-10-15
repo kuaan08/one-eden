@@ -129,7 +129,7 @@ int main() {
     check(SystemRowValue(page, SystemPage::EarlyTextureGc) == L"Normal (seguro)");
     check(HandleSystemInput(page, SystemInput::Confirm) == SystemPageEffect::Changed);
     check(page.settings.xbox_early_texture_gc);
-    check(SystemRowValue(page, SystemPage::EarlyTextureGc) == L"Liberar cedo (experimental)");
+    check(SystemRowValue(page, SystemPage::EarlyTextureGc) == L"Liberar antes (experimental)");
     page.selected = SystemPage::HudFps;
     const unsigned original_fields = page.settings.xbox_overlay_fields;
     check(HandleSystemInput(page, SystemInput::Confirm) == SystemPageEffect::Changed);

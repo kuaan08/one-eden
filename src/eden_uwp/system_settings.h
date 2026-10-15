@@ -20,6 +20,7 @@
 #include "eden_uwp/upscaling.h"
 #include "eden_uwp/ui_theme.h"
 #include "eden_uwp/xbox_performance.h"
+#include "video_core/performance_overlay.h"
 
 namespace EdenXbox {
 
