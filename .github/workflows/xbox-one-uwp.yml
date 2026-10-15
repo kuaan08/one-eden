@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   actions: read
 
 # New pushes supersede older source snapshots. Run only the newest UWP build,
@@ -190,3 +190,41 @@ jobs:
             build-uwp/package/sm5probe/Microsoft.VCLibs.x64.14.00.appx
           if-no-files-found: error
           retention-days: 14
+
+      # Permanent distribution for the updater: GitHub Actions artifacts expire.
+      # This publishes two complete signed packages only after their validation
+      # succeeded. The console does NOT silently install these APPXs.
+      - name: Publish versioned Xbox One developer pre-release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = "0.2.88.$env:GITHUB_RUN_NUMBER"
+          $tag = "xbox-one-dev-$version"
+          $files = @(
+            "build-uwp/package/gameplay/eden-xbox-normal.appx",
+            "build-uwp/package/sm5probe/eden-xbox-diagnostic.appx",
+            "build-uwp/package/gameplay/eden-xbox.cer"
+          )
+          $vclibs = "build-uwp/package/gameplay/Microsoft.VCLibs.x64.14.00.appx"
+          if (Test-Path -LiteralPath $vclibs) { $files += $vclibs }
+          foreach ($f in $files) {
+            if (!(Test-Path -LiteralPath $f)) { throw "Missing release package: $f" }
+          }
+          $notes = @"
+          Xbox One Fat / Developer Mode SM5.1 experimental build $version
+
+          Includes Gameplay (no profiler), Diagnostic (tracing enabled), and
+          public signing certificate. Install via Xbox Device Portal.
+          No automatic/silent APPX installation is available in the emulator.
+
+          IMPORTANT: CI uses a developer self-signed signing certificate.
+          Each signing certificate must be trusted on the console. Future
+          updates may require trusting a new certificate if no persistent
+          signing identity is configured. Keep your own game data and keys private.
+
+          Source: $env:GITHUB_SHA
+          "@
+          gh release create $tag --repo $env:GITHUB_REPOSITORY --title "Xbox One Dev $version" --notes $notes --prerelease --target $env:GITHUB_SHA @files
+          if ($LASTEXITCODE -ne 0) { throw "GitHub release publishing failed" }
