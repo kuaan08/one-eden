@@ -4,6 +4,8 @@
 #include <winrt/Windows.ApplicationModel.h>
 #include <winrt/Windows.Data.Json.h>
 #include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.Foundation.Collections.h>
+#include <winrt/Windows.Web.Http.Headers.h>
 #include <winrt/Windows.Web.Http.h>
 #include <winrt/Windows.Web.Http.Filters.h>
 namespace EdenXbox::Updates {
@@ -16,7 +18,6 @@ Result CheckGithubReleases() {
         Filters::HttpBaseProtocolFilter filter;
         filter.CacheControl().ReadBehavior(Filters::HttpCacheReadBehavior::NoCache);
         HttpClient client{filter};
-        client.Timeout(std::chrono::seconds{8});
         client.DefaultRequestHeaders().UserAgent().TryParseAdd(L"EdenXboxOneUpdater/1.0");
         const auto response=client.GetAsync(winrt::Windows::Foundation::Uri{
             L"https://api.github.com/repos/kuaan08/one-eden/releases?per_page=8"}).get();
