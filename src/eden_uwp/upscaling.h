@@ -43,16 +43,17 @@ inline UpscalingSettings ToSettings(Upscaling upscaling) {
     case Upscaling::FsrSharp: return {ScalingFilter::Fsr, SliderSharp};
     case Upscaling::FsrBalanced: return {ScalingFilter::Fsr, SliderBalanced};
     case Upscaling::FsrSoft: return {ScalingFilter::Fsr, SliderSoft};
-    case Upscaling::Nearest: break;
+    case Upscaling::Nearest: return {ScalingFilter::NearestNeighbor, SliderBalanced};
     case Upscaling::Bilinear: break;
     }
-    // The D3D12 present only has the bilinear blit and FSR; Bilinear names what it shows.
+    // Bilinear stays the default; Xbox D3D12 now also has a true point sampler.
     return {ScalingFilter::Bilinear, SliderBalanced};
 }
 
 /// The choice closest to arbitrary settings (another frontend's): any filter but FSR shows the
 /// bilinear blit, and a slider picks the nearest level.
 inline Upscaling FromSettings(Settings::ScalingFilter filter, int slider) {
+    if (filter == Settings::ScalingFilter::NearestNeighbor) return Upscaling::Nearest;
     if (filter != Settings::ScalingFilter::Fsr) return Upscaling::Bilinear;
     if (slider < (SliderSharp + SliderBalanced + 1) / 2) return Upscaling::FsrSharp;
     if (slider < (SliderBalanced + SliderSoft + 1) / 2) return Upscaling::FsrBalanced;
