@@ -17,7 +17,8 @@
 namespace EdenXbox {
 
 struct SystemPage {
-    enum Row : std::size_t { UserName, InterfaceLanguage, GameLanguage, Region, AdultMods, PerformanceStats, PulseSessions, ClearCache, RowCount };
+    enum Row : std::size_t { UserName, InterfaceLanguage, GameLanguage, Region,
+    UiThemeChoice, XboxDepthFix, AdultMods, PerformanceStats, PulseSessions, ClearCache, RowCount };
 
     bool open{};
     std::size_t selected{};
@@ -85,6 +86,12 @@ inline SystemPageEffect HandleSystemInput(SystemPage& page, SystemInput input) {
     case Row::Region:
         settings.region = StepChoice(settings.region, SelectableRegions(), back);
         return SystemPageEffect::Changed;
+    case Row::UiThemeChoice:
+        settings.ui_theme = StepUiTheme(settings.ui_theme, back);
+        return SystemPageEffect::Changed;
+    case Row::XboxDepthFix:
+        settings.xbox_dedicated_depth = !settings.xbox_dedicated_depth;
+        return SystemPageEffect::Changed;
     case Row::AdultMods:
         settings.show_adult_mods = !settings.show_adult_mods;
         return SystemPageEffect::Changed;
@@ -127,6 +134,8 @@ inline I18n::Text SystemRowTitle(SystemPage::Row row) {
     case SystemPage::InterfaceLanguage: return Text::InterfaceLanguage;
     case SystemPage::GameLanguage:      return Text::GameLanguage;
     case SystemPage::Region:            return Text::ConsoleRegion;
+    case SystemPage::UiThemeChoice:     return Text::ThemeTitle;
+    case SystemPage::XboxDepthFix:      return Text::XboxDepthFixTitle;
     case SystemPage::PerformanceStats:  return Text::PerformanceStats;
     case SystemPage::AdultMods:         return Text::ModsAdult;
     case SystemPage::PulseSessions:     return Text::PulseSessions;
@@ -141,6 +150,8 @@ inline I18n::Text SystemRowHint(SystemPage::Row row) {
     case SystemPage::InterfaceLanguage: return Text::InterfaceLanguageHint;
     case SystemPage::GameLanguage:      return Text::GameLanguageHint;
     case SystemPage::Region:            return Text::ConsoleRegionHint;
+    case SystemPage::UiThemeChoice:     return Text::ThemeHint;
+    case SystemPage::XboxDepthFix:      return Text::XboxDepthFixHint;
     case SystemPage::PerformanceStats:  return Text::PerformanceStatsHint;
     case SystemPage::AdultMods:         return Text::ModsAdultHint;
     case SystemPage::PulseSessions:     return Text::PulseSessionsHint;
@@ -168,6 +179,11 @@ inline std::wstring SystemRowValue(const SystemPage& page, SystemPage::Row row) 
     case SystemPage::Region:
         if (settings.region) return std::wstring{I18n::Tr(RegionText(*settings.region))};
         return automatic(I18n::Tr(RegionText(RegionForLocale(page.locale))));
+    case SystemPage::UiThemeChoice:
+        return std::wstring{I18n::Tr(settings.ui_theme == UiTheme::XboxGreen ? Text::ThemeXboxGreen :
+            settings.ui_theme == UiTheme::Amoled ? Text::ThemeAmoled : Text::ThemeEden)};
+    case SystemPage::XboxDepthFix:
+        return std::wstring{I18n::Tr(settings.xbox_dedicated_depth ? Text::Yes : Text::No)};
     case SystemPage::PerformanceStats:
         return std::wstring{I18n::Tr(settings.show_performance_stats ? Text::Yes : Text::No)};
     case SystemPage::AdultMods:
@@ -181,6 +197,10 @@ inline std::wstring SystemRowValue(const SystemPage& page, SystemPage::Row row) 
 
 /// Geometry shared by the canvas and pointer hit tests (1280x720 layout units).
 struct SystemPageLayout {
+    static constexpr std::size_t VisibleRows = 8;
+    static constexpr std::size_t FirstRow(std::size_t selected) {
+        return selected < VisibleRows ? 0 : selected - VisibleRows + 1;
+    }
     static constexpr float PanelX = 140, PanelY = 72, PanelWidth = 1000, PanelHeight = 612;
     static constexpr float RowX = 180, RowWidth = 920, RowTop = 172, RowStride = 52, RowHeight = 50;
     static constexpr float Notice = 594, Footer = 630;
