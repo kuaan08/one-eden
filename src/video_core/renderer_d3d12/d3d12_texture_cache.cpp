@@ -19,6 +19,8 @@
 #include "video_core/perf_counters.h"
 #include "video_core/renderer_d3d12/d3d12_barrier_batch.h"
 #include "video_core/renderer_d3d12/d3d12_checkpoint_readback.h"
+#include "video_core/renderer_d3d12/d3d12_xbox3d_compat.h"
+#include "video_core/renderer_d3d12/d3d12_shader_compiler.h"
 #include "video_core/renderer_d3d12/d3d12_blit_image.h"
 #include "video_core/renderer_d3d12/d3d12_scheduler.h"
 #include "video_core/surface.h"
@@ -490,15 +492,25 @@ Image::Image(TextureCacheRuntime& runtime_, const VideoCommon::ImageInfo& info_,
                     static_cast<u32>(desc.Format), desc.Width, desc.Height,
                     static_cast<void*>(resource.Get()));
     }
-    CheckRemovedAfter(runtime->device.Get(), [&] {
-        return fmt::format("creating image {} ({} dim {} {}x{}x{} levels {} samples {} flags 0x{:x})",
-                           info_.format, static_cast<u32>(desc.Format),
-                           static_cast<u32>(desc.Dimension), desc.Width, desc.Height,
-                           desc.DepthOrArraySize, desc.MipLevels, desc.SampleDesc.Count,
-                           static_cast<u32>(desc.Flags));
-    });
+    // On Xbox One SM5.1 an access violation may follow creation of a depth
+    // resource. Cemu on the same hardware exhibits a similar offset even for
+    // committed allocations. Compare this removable diagnostic query to a
+    // no-query run without bypassing resource creation error checks.
+    const bool skip_check = (resource_flags & D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL) &&
+        IsSm5DeviceRequired() &&
+        SkipPostDepthDeviceQuery(XboxDepthCompatMode());
+    if (!skip_check) {
+        CheckRemovedAfter(runtime->device.Get(), [&] {
+            return fmt::format("creating image {} ({} dim {} {}x{}x{} levels {} samples {} flags 0x{:x})",
+                               info_.format, static_cast<u32>(desc.Format),
+                               static_cast<u32>(desc.Dimension), desc.Width, desc.Height,
+                               desc.DepthOrArraySize, desc.MipLevels, desc.SampleDesc.Count,
+                               static_cast<u32>(desc.Flags));
+        });
+    }
     if (trace_depth) {
-        LOG_WARNING(Render, "D3D12 DEPTH-PROBE END CheckRemovedAfter");
+        LOG_WARNING(Render, "D3D12 DEPTH-PROBE {} CheckRemovedAfter",
+                    skip_check ? "SKIPPED (experiment)" : "END");
         LOG_WARNING(Render, "D3D12 DEPTH-PROBE BEGIN GetCopyableFootprints format={} {}x{}",
                     static_cast<u32>(desc.Format), desc.Width, desc.Height);
     }

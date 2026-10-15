@@ -14,6 +14,8 @@
 #include "video_core/perf_counters.h"
 #include "video_core/renderer_d3d12/d3d12_barrier_batch.h"
 #include "video_core/renderer_d3d12/d3d12_srv_compatibility.h"
+#include "video_core/renderer_d3d12/d3d12_xbox3d_compat.h"
+#include "video_core/renderer_d3d12/d3d12_shader_compiler.h"
 #include "video_core/surface.h"
 #include "video_core/texture_cache/util.h"
 
@@ -239,6 +241,19 @@ ImageView::ImageView(TextureCacheRuntime& runtime_, const VideoCommon::ImageView
         } else if (is_msaa) {
             dsv_desc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2DMSARRAY;
             dsv_desc.Texture2DMSArray = {base_layer, layers};
+        } else if (IsSm5DeviceRequired() && UseSingleLayerDepthView(XboxDepthCompatMode()) &&
+                   resource_desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D &&
+                   resource_array == 1 && base_layer == 0 && layers == 1) {
+            // D3D12 permits an array descriptor of size one, but Xbox One's
+            // UMD may differ. A/B test the explicit non-array DSV descriptor.
+            dsv_desc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+            dsv_desc.Texture2D = {base_level};
+            static std::atomic_uint single_dsv_logs{};
+            if (single_dsv_logs.fetch_add(1, std::memory_order_relaxed) < 16) {
+                LOG_WARNING(Render, "D3D12 DEPTH-PROBE SM5.1 single-layer DSV: "
+                            "view=TEXTURE2D format={} mip={}",
+                            static_cast<u32>(dsv_desc.Format), base_level);
+            }
         } else {
             dsv_desc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2DARRAY;
             dsv_desc.Texture2DArray = {base_level, base_layer, layers};

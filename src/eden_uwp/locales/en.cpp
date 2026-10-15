@@ -556,5 +556,11 @@ const Catalog EnglishCatalog = MakeCatalog({
     {Text::UpdateUpToDate, L"This app is up to date."},
     {Text::UpdateNoRelease, L"No Xbox One Releases have been published yet."},
     {Text::UpdateNetworkError, L"Could not check updates · check your connection."},
+    {Text::XboxDepthProbeTitle, L"3D driver experiments"},
+    {Text::XboxDepthProbeHint, L"D3D12 depth test modes · restart game to apply"},
+    {Text::XboxDepthBaseline, L"Normal (previous behavior)"},
+    {Text::XboxDepthSkipQuery, L"Skip post-depth driver query"},
+    {Text::XboxDepthSingleDsv, L"Single-layer depth view (2D)"},
+    {Text::XboxDepthBoth, L"Both experiments (test)"},
 });
 } // namespace EdenXbox::I18n

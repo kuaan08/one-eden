@@ -42,6 +42,7 @@ struct SystemSettings {
     Upscaling upscaling{Upscaling::Bilinear};         ///< Set from the in-game menu.
     UiTheme ui_theme{UiTheme::Eden};                   ///< Immediate frontend theme.
     bool auto_check_updates{true}; ///< Background check at startup; no silent installation.
+    unsigned xbox_depth_probe_mode{}; ///< 0 baseline; 1 skip query; 2 DSV Texture2D; 3 both (SM5 only).
     bool xbox_dedicated_depth{true};                  ///< Requires starting a new game.
     Settings::ResolutionSetup xbox_resolution{Settings::ResolutionSetup::Res1X};
     XboxFastmem xbox_fastmem{XboxFastmem::Off};

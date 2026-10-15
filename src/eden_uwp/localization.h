@@ -581,6 +581,12 @@ enum class Text : std::uint16_t {
     UpdateUpToDate,
     UpdateNoRelease,
     UpdateNetworkError,
+    XboxDepthProbeTitle,
+    XboxDepthProbeHint,
+    XboxDepthBaseline,
+    XboxDepthSkipQuery,
+    XboxDepthSingleDsv,
+    XboxDepthBoth,
 
 
     Count

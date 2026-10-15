@@ -556,5 +556,11 @@ const Catalog SpanishCatalog = MakeCatalog({
     {Text::UpdateUpToDate, L"El emulador está actualizado."},
     {Text::UpdateNoRelease, L"Aún no hay versiones para Xbox One."},
     {Text::UpdateNetworkError, L"Error de red al buscar actualizaciones."},
+    {Text::XboxDepthProbeTitle, L"Pruebas del controlador 3D"},
+    {Text::XboxDepthProbeHint, L"Pruebas D3D12 de profundidad · reiniciar juego"},
+    {Text::XboxDepthBaseline, L"Normal (anterior)"},
+    {Text::XboxDepthSkipQuery, L"Omitir consulta tras profundidad"},
+    {Text::XboxDepthSingleDsv, L"Vista de profundidad de una capa (2D)"},
+    {Text::XboxDepthBoth, L"Ambas pruebas"},
 });
 } // namespace EdenXbox::I18n

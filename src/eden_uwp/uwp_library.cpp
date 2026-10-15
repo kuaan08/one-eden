@@ -466,6 +466,7 @@ std::optional<std::string> ShowGameLibrary(void* core_window, unsigned width, un
             const bool saved = SaveSystemSettings(system_page.settings);
             const auto resolved = ApplySystemSettings();
             system_page.notice = Tr(saved ? ((system_page.selected == SystemPage::XboxDepthFix ||
+                                             system_page.selected == SystemPage::XboxDepthProbe ||
                                              system_page.selected == SystemPage::PerfPreset ||
                                              system_page.selected == SystemPage::InternalResolution ||
                                              system_page.selected == SystemPage::FastmemMode ||

@@ -18,7 +18,7 @@ namespace EdenXbox {
 
 struct SystemPage {
     enum Row : std::size_t { UserName, InterfaceLanguage, GameLanguage, Region,
-    UiThemeChoice, CheckUpdates, AutoUpdateCheck, XboxDepthFix, PerfPreset, InternalResolution, FastmemMode,
+    UiThemeChoice, CheckUpdates, AutoUpdateCheck, XboxDepthFix, XboxDepthProbe, PerfPreset, InternalResolution, FastmemMode,
     DisplayFrameSkip, DiskShaderCache, SpeedCap, JitCacheSize, PipelineEviction, HudFps, HudFrame, HudCpu, HudGpu,
     HudMemory, HudPosition, HudScale, EarlyTextureGc, AdultMods, PerformanceStats,
     PulseSessions, ClearCache, RowCount };
@@ -100,6 +100,10 @@ inline SystemPageEffect HandleSystemInput(SystemPage& page, SystemInput input) {
         return SystemPageEffect::Changed;
     case Row::XboxDepthFix:
         settings.xbox_dedicated_depth = !settings.xbox_dedicated_depth;
+        return SystemPageEffect::Changed;
+    case Row::XboxDepthProbe:
+        settings.xbox_depth_probe_mode = (settings.xbox_depth_probe_mode + (back ? 3u : 1u)) % 4u;
+        settings.xbox_preset = XboxPreset::Custom;
         return SystemPageEffect::Changed;
     case Row::PerfPreset:
         ApplyXboxPreset(settings, StepXboxPreset(settings.xbox_preset, back));
@@ -203,6 +207,7 @@ inline I18n::Text SystemRowTitle(SystemPage::Row row) {
     case SystemPage::CheckUpdates:      return Text::UpdateCheckTitle;
     case SystemPage::AutoUpdateCheck:   return Text::UpdateAutoTitle;
     case SystemPage::XboxDepthFix:      return Text::XboxDepthFixTitle;
+    case SystemPage::XboxDepthProbe:    return Text::XboxDepthProbeTitle;
     case SystemPage::PerfPreset:        return Text::PerfPresetTitle;
     case SystemPage::InternalResolution:return Text::InternalResolutionTitle;
     case SystemPage::FastmemMode:       return Text::FastmemTitle;
@@ -237,6 +242,7 @@ inline I18n::Text SystemRowHint(SystemPage::Row row) {
     case SystemPage::CheckUpdates:      return Text::UpdateCheckHint;
     case SystemPage::AutoUpdateCheck:   return Text::UpdateAutoHint;
     case SystemPage::XboxDepthFix:      return Text::XboxDepthFixHint;
+    case SystemPage::XboxDepthProbe:    return Text::XboxDepthProbeHint;
     case SystemPage::PerfPreset:        return Text::PerfPresetHint;
     case SystemPage::InternalResolution:return Text::InternalResolutionHint;
     case SystemPage::FastmemMode:       return Text::FastmemHint;
@@ -288,6 +294,11 @@ inline std::wstring SystemRowValue(const SystemPage& page, SystemPage::Row row) 
         return std::wstring{I18n::Tr(settings.auto_check_updates ? Text::Yes : Text::No)};
     case SystemPage::XboxDepthFix:
         return std::wstring{I18n::Tr(settings.xbox_dedicated_depth ? Text::Yes : Text::No)};
+    case SystemPage::XboxDepthProbe:
+        return std::wstring{I18n::Tr(settings.xbox_depth_probe_mode == 1 ? Text::XboxDepthSkipQuery :
+            settings.xbox_depth_probe_mode == 2 ? Text::XboxDepthSingleDsv :
+            settings.xbox_depth_probe_mode == 3 ? Text::XboxDepthBoth :
+            Text::XboxDepthBaseline)};
     case SystemPage::PerfPreset:
         return std::wstring{I18n::Tr(settings.xbox_preset == XboxPreset::Balanced ? Text::PerfPresetBalanced :
             settings.xbox_preset == XboxPreset::TwoD ? Text::PerfPreset2D :
