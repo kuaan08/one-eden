@@ -48,6 +48,8 @@ struct SystemSettings {
     XboxPreset xbox_preset{XboxPreset::Balanced};
     bool xbox_disk_shader_cache{true};
     bool xbox_speed_cap{true};
+    unsigned xbox_jit_cache_mib{128}; ///< Per emulated CPU core. Requires restart.
+    bool xbox_pipeline_eviction{true}; ///< Release unused D3D12 PSOs; on by default.
     bool xbox_early_texture_gc{}; ///< Experimental: evict unused, unmodified textures earlier.
 
     bool operator==(const SystemSettings&) const = default;
@@ -62,6 +64,8 @@ inline void ApplyXboxPreset(SystemSettings& s, XboxPreset preset) {
     s.xbox_frame_skip = XboxFrameSkip::Off;
     s.xbox_disk_shader_cache = true;
     s.xbox_speed_cap = true;
+    s.xbox_jit_cache_mib = 128;
+    s.xbox_pipeline_eviction = true;
     s.xbox_early_texture_gc = false; // All presets start from the safe cache policy.
     switch (preset) {
     case XboxPreset::TwoD: s.xbox_resolution = R::Res3_4X; break;

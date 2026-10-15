@@ -108,6 +108,10 @@ int main() {
     check(SafeXboxResolution(9999) == Settings::ResolutionSetup::Res1X);
     check(SafeXboxFastmem(9999) == XboxFastmem::Off);
     check(SafeXboxFrameSkip(9999) == XboxFrameSkip::Off);
+    check(SafeXboxJitCache(9999) == 128u);
+    check(StepXboxJitCache(128, false) == 192u);
+    check(StepXboxJitCache(64, true) == 256u);
+    check(preset.xbox_pipeline_eviction && preset.xbox_jit_cache_mib == 128u);
     check(XboxPresentInterval(XboxFrameSkip::Off) == 1);
     check(XboxPresentInterval(XboxFrameSkip::Half) == 2);
     check(XboxPresentInterval(XboxFrameSkip::Third) == 3);
@@ -120,6 +124,7 @@ int main() {
     for (const auto expected : {SystemPage::PerfPreset, SystemPage::InternalResolution,
                                 SystemPage::FastmemMode, SystemPage::DisplayFrameSkip,
                                 SystemPage::DiskShaderCache, SystemPage::SpeedCap,
+                                SystemPage::JitCacheSize, SystemPage::PipelineEviction,
                                 SystemPage::HudFps, SystemPage::HudFrame, SystemPage::HudCpu,
                                 SystemPage::HudGpu, SystemPage::HudMemory, SystemPage::HudPosition,
                                 SystemPage::HudScale, SystemPage::EarlyTextureGc}) {

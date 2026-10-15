@@ -182,6 +182,10 @@ The System settings page has real, persistent controls that are **sampled at gam
 | Display frame skipping | Off, show 1/2, show 1/3 | Omits **final display presentation only**. It does not skip guest CPU/GPU work or generate extra frames |
 | Disk shader/pipeline cache | On (default), Off | Controls existing serialized shader/pipeline cache; **not** a durable native x64 Dynarmic object cache |
 | Emulation speed cap | 100% (default), Uncapped | Removes the speed limiter; not an FPS hack or 60 FPS patch |
+| CPU JIT cache size | 64, 128 (default), 192, 256 MiB per emulated CPU core | Memory/performance trade-off; restart game; **not** persistent x64 compiled-code storage |
+| D3D12 pipeline eviction | On (default), Off | Trim idle PSOs to reduce RAM usage; turning it off can increase RAM; restart game |
+| Configurable overlay | Toggle FPS / frame time / process CPU / GPU queue / app RAM separately; size and corner | Real metrics, applied from Settings > System; CPU is equivalent cores, GPUQ is queue busy not total GPU usage |
+| Unused texture release | Normal (default), Early (experimental) | Earlier bounded GC for idle **unmodified** textures; does not flush live render targets; may stutter |
 
 Most settings require **starting the game again**. Skipping the final
 presentation can make movement appear less fluid. The 3D experimental preset

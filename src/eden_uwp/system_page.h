@@ -19,7 +19,7 @@ namespace EdenXbox {
 struct SystemPage {
     enum Row : std::size_t { UserName, InterfaceLanguage, GameLanguage, Region,
     UiThemeChoice, XboxDepthFix, PerfPreset, InternalResolution, FastmemMode,
-    DisplayFrameSkip, DiskShaderCache, SpeedCap, HudFps, HudFrame, HudCpu, HudGpu,
+    DisplayFrameSkip, DiskShaderCache, SpeedCap, JitCacheSize, PipelineEviction, HudFps, HudFrame, HudCpu, HudGpu,
     HudMemory, HudPosition, HudScale, EarlyTextureGc, AdultMods, PerformanceStats,
     PulseSessions, ClearCache, RowCount };
 
@@ -118,6 +118,14 @@ inline SystemPageEffect HandleSystemInput(SystemPage& page, SystemInput input) {
         settings.xbox_speed_cap = !settings.xbox_speed_cap;
         settings.xbox_preset = XboxPreset::Custom;
         return SystemPageEffect::Changed;
+    case Row::JitCacheSize:
+        settings.xbox_jit_cache_mib = StepXboxJitCache(settings.xbox_jit_cache_mib, back);
+        settings.xbox_preset = XboxPreset::Custom;
+        return SystemPageEffect::Changed;
+    case Row::PipelineEviction:
+        settings.xbox_pipeline_eviction = !settings.xbox_pipeline_eviction;
+        settings.xbox_preset = XboxPreset::Custom;
+        return SystemPageEffect::Changed;
     case Row::HudFps:
         settings.xbox_overlay_fields ^= VideoCore::OverlayFps;
         return SystemPageEffect::Changed;
@@ -193,6 +201,8 @@ inline I18n::Text SystemRowTitle(SystemPage::Row row) {
     case SystemPage::DisplayFrameSkip:  return Text::DisplaySkipTitle;
     case SystemPage::DiskShaderCache:   return Text::DiskCacheTitle;
     case SystemPage::SpeedCap:          return Text::SpeedCapTitle;
+    case SystemPage::JitCacheSize:      return Text::JitCacheTitle;
+    case SystemPage::PipelineEviction:  return Text::PipelineEvictTitle;
     case SystemPage::HudFps:            return Text::HudFpsTitle;
     case SystemPage::HudFrame:          return Text::HudFrameTitle;
     case SystemPage::HudCpu:            return Text::HudCpuTitle;
@@ -223,6 +233,8 @@ inline I18n::Text SystemRowHint(SystemPage::Row row) {
     case SystemPage::DisplayFrameSkip:  return Text::DisplaySkipHint;
     case SystemPage::DiskShaderCache:   return Text::DiskCacheHint;
     case SystemPage::SpeedCap:          return Text::SpeedCapHint;
+    case SystemPage::JitCacheSize:      return Text::JitCacheHint;
+    case SystemPage::PipelineEviction:  return Text::PipelineEvictHint;
     case SystemPage::HudFps:
     case SystemPage::HudFrame:
     case SystemPage::HudCpu:
@@ -281,6 +293,10 @@ inline std::wstring SystemRowValue(const SystemPage& page, SystemPage::Row row) 
         return std::wstring{I18n::Tr(settings.xbox_disk_shader_cache ? Text::Yes : Text::No)};
     case SystemPage::SpeedCap:
         return std::wstring{I18n::Tr(settings.xbox_speed_cap ? Text::Yes : Text::No)};
+    case SystemPage::JitCacheSize:
+        return std::to_wstring(settings.xbox_jit_cache_mib) + L" MiB";
+    case SystemPage::PipelineEviction:
+        return std::wstring{I18n::Tr(settings.xbox_pipeline_eviction ? Text::Yes : Text::No)};
     case SystemPage::HudFps:
     case SystemPage::HudFrame:
     case SystemPage::HudCpu:

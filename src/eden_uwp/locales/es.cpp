@@ -543,5 +543,9 @@ const Catalog SpanishCatalog = MakeCatalog({
     {Text::HudLarge, L"Grande"},
     {Text::EarlyTextureGcOff, L"Normal (seguro)"},
     {Text::EarlyTextureGcOn, L"Liberar antes (experimental)"},
+    {Text::JitCacheTitle, L"Caché JIT CPU por núcleo"},
+    {Text::JitCacheHint, L"64 / 128 / 192 / 256 MiB · reiniciar juego"},
+    {Text::PipelineEvictTitle, L"Liberar pipelines sin usar"},
+    {Text::PipelineEvictHint, L"Menos RAM cuando está activo · reiniciar juego"},
 });
 } // namespace EdenXbox::I18n

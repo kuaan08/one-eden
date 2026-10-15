@@ -441,14 +441,14 @@ int RunHeadlessBoot(const std::string& nro_path, const BootSurface& surface,
                                                                : "hybrid diagnostic") +
               (fastmem_enabled ? " (hot " + std::to_string(config.fastmem_hot_mib) + " MiB)" : "") +
               ", D3D12 pipeline workers on, dependent draws preserved" +
-              ", JIT cache " + std::to_string(config.jit_cache_mib) + " MiB per core");
+              ", JIT cache " + std::to_string(xbox_perf.xbox_jit_cache_mib) + " MiB per core");
     D3D12::SetTracedFrame(config.traced_frame, config.traced_frames);
     D3D12::SetMaterialProbe(config.material_probe_x, config.material_probe_y);
     D3D12::SetFrameDiagnostics(!config.play);
     // The GPU spends the same 5 GiB as the emulated DRAM and the JIT: the texture and buffer
     // caches evict against what the whole app has left, not DXGI's budget.
     g_test_memory_limit = u64{config.memory_limit_mib} << 20;
-    Core::SetJitCodeCacheSize(config.jit_cache_mib << 20);
+    Core::SetJitCodeCacheSize(xbox_perf.xbox_jit_cache_mib << 20);
     D3D12::SetAppMemoryQuery(QueryAppMemory);
     D3D12::SetBcArrayDecode(!config.bc_arrays_native);
     // RGBA8 ASTC made loading frames upload 150-260 MiB at once and the console run out of memory
@@ -472,7 +472,9 @@ int RunHeadlessBoot(const std::string& nro_path, const BootSurface& surface,
     D3D12::SetDescriptorRemovalChecks(config.descriptor_checks);
     D3D12::SetDredEnabled(config.dred);
     D3D12::SetGpuBreadcrumbsEnabled(config.gpu_breadcrumbs);
-    D3D12::SetPipelineEviction(config.pso_eviction);
+    D3D12::SetPipelineEviction(xbox_perf.xbox_pipeline_eviction);
+    WriteDiag(std::string("Xbox pipeline eviction: ") +
+              (xbox_perf.xbox_pipeline_eviction ? "on" : "off"));
     VideoCore::Perf::SetDetailedGpuProfile(config.gpu_profile);
     VideoCore::Perf::SetForceSwapIntervalOne(config.force_swap_interval_one);
     Settings::values.async_presentation.SetValue(config.async_present);

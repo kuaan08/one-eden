@@ -31,6 +31,16 @@ inline XboxPreset StepXboxPreset(XboxPreset p, bool backward) {
 inline XboxFrameSkip StepXboxFrameSkip(XboxFrameSkip p, bool backward) {
     return static_cast<XboxFrameSkip>((static_cast<int>(p)+(backward?2:1))%3);
 }
+inline unsigned SafeXboxJitCache(int value) {
+    for (const int mib : {64, 128, 192, 256}) if (value == mib) return static_cast<unsigned>(mib);
+    return 128;
+}
+inline unsigned StepXboxJitCache(unsigned current, bool backward) {
+    constexpr unsigned options[] = {64, 128, 192, 256};
+    unsigned index = 1;
+    for (unsigned i = 0; i < 4; ++i) if (options[i] == current) index = i;
+    return options[(index + (backward ? 3u : 1u)) % 4u];
+}
 inline unsigned XboxPresentInterval(XboxFrameSkip s) {
     return s == XboxFrameSkip::Half ? 2u : s == XboxFrameSkip::Third ? 3u : 1u;
 }

@@ -568,6 +568,10 @@ enum class Text : std::uint16_t {
     HudLarge,
     EarlyTextureGcOff,
     EarlyTextureGcOn,
+    JitCacheTitle,
+    JitCacheHint,
+    PipelineEvictTitle,
+    PipelineEvictHint,
 
 
     Count

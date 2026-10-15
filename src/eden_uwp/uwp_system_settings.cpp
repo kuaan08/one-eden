@@ -37,6 +37,8 @@ constexpr auto OverlayFieldsKey = L"system_xbox_overlay_fields";
 constexpr auto OverlayPositionKey = L"system_xbox_overlay_position";
 constexpr auto OverlayScaleKey = L"system_xbox_overlay_scale";
 constexpr auto EarlyTextureGcKey = L"system_xbox_early_texture_gc";
+constexpr auto JitCacheKey = L"system_xbox_jit_cache_mib";
+constexpr auto PipelineEvictionKey = L"system_xbox_pipeline_eviction";
 
 /// Saved as the enum's value, or -1 for "follow the system". A value that is not a selectable
 /// option (an older or newer build's) also falls back to the system.
@@ -99,6 +101,10 @@ SystemSettings LoadSystemSettings() {
             settings.xbox_speed_cap = winrt::unbox_value<bool>(values.Lookup(SpeedKey));
         if (values.HasKey(EarlyTextureGcKey))
             settings.xbox_early_texture_gc = winrt::unbox_value<bool>(values.Lookup(EarlyTextureGcKey));
+        if (values.HasKey(JitCacheKey))
+            settings.xbox_jit_cache_mib = SafeXboxJitCache(winrt::unbox_value<int32_t>(values.Lookup(JitCacheKey)));
+        if (values.HasKey(PipelineEvictionKey))
+            settings.xbox_pipeline_eviction = winrt::unbox_value<bool>(values.Lookup(PipelineEvictionKey));
     } catch (...) { /* Missing or invalid values keep following the system. */ }
     return settings;
 }
@@ -126,6 +132,8 @@ bool SaveSystemSettings(const SystemSettings& settings) {
         values.Insert(CacheKey, winrt::box_value(settings.xbox_disk_shader_cache));
         values.Insert(SpeedKey, winrt::box_value(settings.xbox_speed_cap));
         values.Insert(EarlyTextureGcKey, winrt::box_value(settings.xbox_early_texture_gc));
+        values.Insert(JitCacheKey, winrt::box_value(static_cast<int32_t>(settings.xbox_jit_cache_mib)));
+        values.Insert(PipelineEvictionKey, winrt::box_value(settings.xbox_pipeline_eviction));
         return true;
     } catch (...) { return false; }
 }
