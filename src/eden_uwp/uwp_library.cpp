@@ -6,6 +6,7 @@
 #include "eden_uwp/uwp_rom_storage.h"
 #include "eden_uwp/storage_path.h"
 #include "eden_uwp/uwp_file_manager.h"
+#include "eden_uwp/update_checker.h"
 
 #include <algorithm>
 #include <chrono>
@@ -89,6 +90,8 @@ std::optional<std::string> ShowGameLibrary(void* core_window, unsigned width, un
     const LibraryCache cache{DefaultLibraryCacheDirectory()};
     bool return_to_configuration = false;
     unsigned picker_kind = 0; // 0 games, 1 keys, 2 firmware
+    std::future<Updates::Result> update_future;
+    std::jthread update_worker;
     std::future<FileSetupStatus> setup_future;
     std::jthread setup_worker;
     FileImportProgress import_progress;
@@ -439,6 +442,20 @@ std::optional<std::string> ShowGameLibrary(void* core_window, unsigned width, un
         future = task.get_future();
         scanner = std::jthread(std::move(task));
     };
+    auto begin_update_check = [&] {
+        if (update_future.valid() &&
+            update_future.wait_for(std::chrono::seconds{0}) != std::future_status::ready) return;
+        std::packaged_task<Updates::Result()> task{[] {
+            winrt::init_apartment(winrt::apartment_type::multi_threaded);
+            struct Uninit { ~Uninit() { winrt::uninit_apartment(); } } uninit;
+            return Updates::CheckGithubReleases();
+        }};
+        update_future = task.get_future();
+        update_worker = std::jthread{std::move(task)};
+        system_page.notice = Tr(T::UpdateChecking);
+        system_notice_until = std::chrono::steady_clock::time_point::max();
+        dirty = true;
+    };
     // Saves and applies the System page; the interface switches language on the next frame.
     auto apply_system_effect = [&](SystemPageEffect effect, std::chrono::steady_clock::time_point now) {
         switch (effect) {
@@ -463,6 +480,9 @@ std::optional<std::string> ShowGameLibrary(void* core_window, unsigned width, un
             }
             break;
         }
+        case SystemPageEffect::CheckUpdates:
+            begin_update_check();
+            break;
         case SystemPageEffect::ClearCache: {
             reload_metadata();
             canvas->InvalidateCovers();
@@ -479,6 +499,7 @@ std::optional<std::string> ShowGameLibrary(void* core_window, unsigned width, un
         }
         dirty = true;
     };
+    if (system_page.settings.auto_check_updates) begin_update_check();
     start_scan();
     GamepadButtons previous{};
     StickNavigation stick_navigation;
@@ -488,6 +509,24 @@ std::optional<std::string> ShowGameLibrary(void* core_window, unsigned width, un
     while (true) {
         window.Dispatcher().ProcessEvents(CoreProcessEventsOption::ProcessAllIfPresent);
         const auto now = std::chrono::steady_clock::now();
+        if (update_future.valid() &&
+            update_future.wait_for(std::chrono::seconds{0}) == std::future_status::ready) {
+            const auto result = update_future.get();
+            switch (result.status) {
+            case Updates::Status::Available: {
+                const auto& v = result.latest;
+                const std::wstring version = std::to_wstring(v[0]) + L"." + std::to_wstring(v[1]) +
+                    L"." + std::to_wstring(v[2]) + L"." + std::to_wstring(v[3]);
+                system_page.notice = I18n::Format(T::UpdateAvailable, {version});
+                break;
+            }
+            case Updates::Status::UpToDate: system_page.notice = Tr(T::UpdateUpToDate); break;
+            case Updates::Status::NoRelease: system_page.notice = Tr(T::UpdateNoRelease); break;
+            case Updates::Status::NetworkError: system_page.notice = Tr(T::UpdateNetworkError); break;
+            }
+            system_notice_until = now + std::chrono::seconds{20};
+            dirty = true;
+        }
         if (!panel.keyboard.notice.empty() && now >= keyboard_notice_until) {
             panel.keyboard.notice.clear(); dirty = true;
         }
