@@ -144,7 +144,7 @@ Core/frontend code lives under `src/eden_uwp/` and includes game management, con
 ## Localization, themes and experimental graphics settings
 
 The native UWP frontend currently includes **English, Spanish and Brazilian Portuguese
-(pt-BR)**. All 478 current UI catalog entries are translated for the Portuguese-Brazil interface.
+(pt-BR)**. All 502 current UI catalog entries are translated for the Portuguese-Brazil interface.
 Interface language and the emulated Nintendo Switch game language are separate choices:
 games only display a language if their own files support it.
 
@@ -169,6 +169,26 @@ In the in-game image upscaling menu, select **Pixel art · nearest (2D)** for
 actual D3D12 point sampling at the final blit instead of bilinear blending.
 This preserves sharp edges for pixel art. Bilinear and FSR 1 remain selectable.
 This changes image appearance; any FPS increase is **unverified**.
+
+### Xbox One performance experiments
+
+The System settings page has real, persistent controls that are **sampled at game launch**:
+
+| Option | Values | Technical behavior |
+| --- | --- | --- |
+| Internal resolution | 50%, 75%, 100% | Uses Eden's existing `resolution_setup` and `UpdateRescalingInfo` before the GPU initializes; visual and performance outcome requires console testing |
+| Xbox preset | Balanced, 2D lightweight, 3D experimental | Applies predefined resolution, safe Fastmem Off, disk cache On and normal emulation timing; **not** per-game profiles |
+| Fastmem | Off (default), Hybrid 384 MiB | Maps a partial guest-memory arena via the existing HostMemory path; may crash or **reduce** FPS |
+| Display frame skipping | Off, show 1/2, show 1/3 | Omits **final display presentation only**. It does not skip guest CPU/GPU work or generate extra frames |
+| Disk shader/pipeline cache | On (default), Off | Controls existing serialized shader/pipeline cache; **not** a durable native x64 Dynarmic object cache |
+| Emulation speed cap | 100% (default), Uncapped | Removes the speed limiter; not an FPS hack or 60 FPS patch |
+
+Most settings require **starting the game again**. Skipping the final
+presentation can make movement appear less fluid. The 3D experimental preset
+still cannot guarantee launching *A Short Hike*; that driver crash remains
+under investigation. Shader-cache storage already exists in the D3D12 code
+(`d3d12.bin`), and JIT prewarming is a separate existing mechanism. A
+fully persistent host-native JIT cache is **not implemented**.
 
 ### Two package variants
 

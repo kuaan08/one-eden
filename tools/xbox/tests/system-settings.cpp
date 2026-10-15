@@ -91,6 +91,26 @@ int main() {
     check(HandleSystemInput(page, SystemInput::Right) == SystemPageEffect::Changed &&
           page.settings.ui_theme == UiTheme::Amoled);
     check(SystemPageLayout::FirstRow(SystemPage::ClearCache) > 0);
+    // Preset behavior is deliberately deterministic: none silently enables
+    // unstable Fastmem, frame skipping, or an uncapped game clock.
+    SystemSettings preset;
+    ApplyXboxPreset(preset, XboxPreset::TwoD);
+    check(preset.xbox_resolution == Settings::ResolutionSetup::Res3_4X);
+    check(preset.xbox_fastmem == XboxFastmem::Off &&
+          preset.xbox_frame_skip == XboxFrameSkip::Off);
+    ApplyXboxPreset(preset, XboxPreset::Experimental3D);
+    check(preset.xbox_resolution == Settings::ResolutionSetup::Res1_2X &&
+          preset.xbox_dedicated_depth);
+    ApplyXboxPreset(preset, XboxPreset::Balanced);
+    check(preset.xbox_resolution == Settings::ResolutionSetup::Res1X);
+    check(StepXboxResolution(Settings::ResolutionSetup::Res1X, false) ==
+          Settings::ResolutionSetup::Res1_2X);
+    check(SafeXboxResolution(9999) == Settings::ResolutionSetup::Res1X);
+    check(SafeXboxFastmem(9999) == XboxFastmem::Off);
+    check(SafeXboxFrameSkip(9999) == XboxFrameSkip::Off);
+    check(XboxPresentInterval(XboxFrameSkip::Off) == 1);
+    check(XboxPresentInterval(XboxFrameSkip::Half) == 2);
+    check(XboxPresentInterval(XboxFrameSkip::Third) == 3);
     check(HandleSystemInput(page, SystemInput::Down) == SystemPageEffect::None &&
           page.selected == SystemPage::XboxDepthFix);
     check(page.settings.xbox_dedicated_depth);

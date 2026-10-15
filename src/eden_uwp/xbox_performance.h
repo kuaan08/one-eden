@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include <cstdint>
+#include <initializer_list>
 #include "common/settings_enums.h"
 namespace EdenXbox {
 enum class XboxFastmem : std::uint8_t { Off, Hybrid };
@@ -23,7 +24,8 @@ inline XboxFastmem SafeXboxFastmem(int v) { return v == 1 ? XboxFastmem::Hybrid 
 inline XboxFrameSkip SafeXboxFrameSkip(int v) { return v == 1 ? XboxFrameSkip::Half : v == 2 ? XboxFrameSkip::Third : XboxFrameSkip::Off; }
 inline XboxPreset SafeXboxPreset(int v) { return v >= 0 && v <= 3 ? static_cast<XboxPreset>(v) : XboxPreset::Custom; }
 inline XboxPreset StepXboxPreset(XboxPreset p, bool backward) {
-    const int i = p == XboxPreset::Custom ? 0 : static_cast<int>(p)-1;
+    if (p == XboxPreset::Custom) return backward ? XboxPreset::Experimental3D : XboxPreset::Balanced;
+    const int i = static_cast<int>(p)-1;
     return static_cast<XboxPreset>((i+(backward?2:1))%3+1);
 }
 inline XboxFrameSkip StepXboxFrameSkip(XboxFrameSkip p, bool backward) {
