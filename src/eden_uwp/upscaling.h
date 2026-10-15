@@ -17,12 +17,12 @@
 
 namespace EdenXbox {
 
-enum class Upscaling : std::uint8_t { Bilinear, FsrSharp, FsrBalanced, FsrSoft };
+enum class Upscaling : std::uint8_t { Bilinear, FsrSharp, FsrBalanced, FsrSoft, Nearest };
 
 /// The values offered, in the order left/right step through them.
 inline std::span<const Upscaling> SelectableUpscalings() {
-    static constexpr std::array values{Upscaling::Bilinear, Upscaling::FsrSharp,
-                                       Upscaling::FsrBalanced, Upscaling::FsrSoft};
+    static constexpr std::array values{Upscaling::Bilinear, Upscaling::Nearest, Upscaling::FsrSharp,
+                                        Upscaling::FsrBalanced, Upscaling::FsrSoft};
     return values;
 }
 
@@ -43,6 +43,7 @@ inline UpscalingSettings ToSettings(Upscaling upscaling) {
     case Upscaling::FsrSharp: return {ScalingFilter::Fsr, SliderSharp};
     case Upscaling::FsrBalanced: return {ScalingFilter::Fsr, SliderBalanced};
     case Upscaling::FsrSoft: return {ScalingFilter::Fsr, SliderSoft};
+    case Upscaling::Nearest: break;
     case Upscaling::Bilinear: break;
     }
     // The D3D12 present only has the bilinear blit and FSR; Bilinear names what it shows.
@@ -77,6 +78,7 @@ inline Upscaling StepUpscaling(Upscaling current, bool back) {
 /// boot.cfg "upscaling=": bilinear, fsr (balanced), fsr-sharp, fsr-balanced or fsr-soft.
 inline std::optional<Upscaling> ParseUpscaling(std::string_view text) {
     if (text == "bilinear") return Upscaling::Bilinear;
+    if (text == "nearest" || text == "pixel-art") return Upscaling::Nearest;
     if (text == "fsr" || text == "fsr-balanced") return Upscaling::FsrBalanced;
     if (text == "fsr-sharp") return Upscaling::FsrSharp;
     if (text == "fsr-soft") return Upscaling::FsrSoft;
@@ -89,6 +91,7 @@ inline I18n::Text UpscalingText(Upscaling upscaling) {
     case Upscaling::FsrSharp: return Text::UpscalingFsrSharp;
     case Upscaling::FsrBalanced: return Text::UpscalingFsrBalanced;
     case Upscaling::FsrSoft: return Text::UpscalingFsrSoft;
+    case Upscaling::Nearest: return Text::UpscalingNearest;
     case Upscaling::Bilinear: break;
     }
     return Text::UpscalingBilinear;
