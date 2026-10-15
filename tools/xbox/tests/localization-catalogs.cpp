@@ -11,12 +11,14 @@ int main() {
     using namespace EdenXbox::I18n;
     auto check = [](bool ok) { if (!ok) std::abort(); };
     const auto languages = UiLanguages();
-    check(languages.size() >= 2 && languages.front().tag == L"en");
+    check(languages.size() >= 3 && languages.front().tag == L"en");
 
     // Negotiation: exact, shortened, case/underscore-insensitive, in preference order, English last.
     auto negotiate = [&](std::vector<std::wstring> preferences) {
         return NegotiateUiLanguage(languages, preferences).tag;
     };
+    check(negotiate({L"pt-BR"}) == L"pt-BR");
+    check(negotiate({L"PT_br"}) == L"pt-BR");
     check(negotiate({L"es-CO"}) == L"es");
     check(negotiate({L"es-419"}) == L"es");
     check(negotiate({L"ES_mx"}) == L"es");
@@ -33,6 +35,11 @@ int main() {
     check(Plural(Text::GamesCountOne, Text::GamesCountOther, 1) == L"1 juego");
     check(Plural(Text::GamesCountOne, Text::GamesCountOther, 0) == L"0 juegos");
     check(Format(Text::Importing, {L"3", L"9"}) == L"Importando 3 / 9 archivos...");
+    SetUiLanguage(*FindUiLanguage(L"pt-BR"));
+    check(Tr(Text::Play) == L"Jogar");
+    check(Tr(Text::ThemeTitle) == L"Tema visual");
+    check(Plural(Text::GamesCountOne, Text::GamesCountOther, 2) == L"2 jogos");
+    check(Format(Text::Importing, {L"3", L"9"}) == L"Importando 3 / 9 arquivos...");
     SetUiLanguage(*FindUiLanguage(L"en"));
     check(Plural(Text::GamesCountOne, Text::GamesCountOther, 2) == L"2 games");
     check(ToUtf8(L"Ñ€😀") == "\xC3\x91\xE2\x82\xAC\xF0\x9F\x98\x80");

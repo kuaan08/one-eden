@@ -85,6 +85,18 @@ int main() {
     page.selected = SystemPage::Region;
     check(HandleSystemInput(page, SystemInput::Confirm) == SystemPageEffect::Changed && page.settings.region);
     check(HandleSystemInput(page, SystemInput::Down) == SystemPageEffect::None &&
+          page.selected == SystemPage::UiThemeChoice);
+    check(HandleSystemInput(page, SystemInput::Right) == SystemPageEffect::Changed &&
+          page.settings.ui_theme == UiTheme::XboxGreen);
+    check(HandleSystemInput(page, SystemInput::Right) == SystemPageEffect::Changed &&
+          page.settings.ui_theme == UiTheme::Amoled);
+    check(SystemPageLayout::FirstRow(SystemPage::ClearCache) > 0);
+    check(HandleSystemInput(page, SystemInput::Down) == SystemPageEffect::None &&
+          page.selected == SystemPage::XboxDepthFix);
+    check(page.settings.xbox_dedicated_depth);
+    check(HandleSystemInput(page, SystemInput::Confirm) == SystemPageEffect::Changed &&
+          !page.settings.xbox_dedicated_depth);
+    check(HandleSystemInput(page, SystemInput::Down) == SystemPageEffect::None &&
           page.selected == SystemPage::AdultMods);
     check(SystemRowValue(page, SystemPage::AdultMods) == L"Ocultos");
     check(HandleSystemInput(page, SystemInput::Right) == SystemPageEffect::Changed && page.settings.show_adult_mods);

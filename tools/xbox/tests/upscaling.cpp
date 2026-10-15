@@ -20,7 +20,8 @@ int main() {
         check(FromSettings(values.filter, values.fsr_sharpening_slider) == upscaling);
         check(values.fsr_sharpening_slider >= 0 &&
               values.fsr_sharpening_slider <= D3D12::Fsr::MAX_SHARPENING_SLIDER);
-        check((upscaling == Upscaling::Bilinear) == (values.filter != ScalingFilter::Fsr));
+        check((upscaling == Upscaling::Nearest) == (values.filter == ScalingFilter::NearestNeighbor));
+        check((upscaling == Upscaling::Bilinear) == (values.filter == ScalingFilter::Bilinear));
         check(UpscalingFromValue(static_cast<std::int32_t>(upscaling)) == upscaling);
     }
     // Sharper choices sharpen more (fewer RCAS stops).
@@ -33,7 +34,7 @@ int main() {
 
     // Settings another frontend wrote: any non-FSR filter is the bilinear blit D3D12 has, and a
     // slider picks the nearest level, out of range values included.
-    check(FromSettings(ScalingFilter::NearestNeighbor, 0) == Upscaling::Bilinear);
+    check(FromSettings(ScalingFilter::NearestNeighbor, 0) == Upscaling::Nearest);
     check(FromSettings(ScalingFilter::Sgsr, 0) == Upscaling::Bilinear);
     check(FromSettings(ScalingFilter::Fsr, -20) == Upscaling::FsrSharp);
     check(FromSettings(ScalingFilter::Fsr, 12) == Upscaling::FsrSharp);
@@ -44,7 +45,8 @@ int main() {
     check(FromSettings(ScalingFilter::Fsr, 9999) == Upscaling::FsrSoft);
 
     // Stored values from another build fall back to nothing (the loader then uses Bilinear).
-    check(!UpscalingFromValue(-1) && !UpscalingFromValue(4) && !UpscalingFromValue(255));
+    check(UpscalingFromValue(4) == Upscaling::Nearest);
+    check(!UpscalingFromValue(-1) && !UpscalingFromValue(5) && !UpscalingFromValue(255));
 
     // Stepping visits every choice once in each direction and wraps.
     for (const bool back : {false, true}) {
@@ -56,12 +58,14 @@ int main() {
         } while (current != Upscaling::Bilinear && visited < 10);
         check(visited == SelectableUpscalings().size());
     }
-    check(StepUpscaling(Upscaling::Bilinear, false) == Upscaling::FsrSharp);
+    check(StepUpscaling(Upscaling::Bilinear, false) == Upscaling::Nearest);
     check(StepUpscaling(Upscaling::Bilinear, true) == Upscaling::FsrSoft);
     check(StepUpscaling(static_cast<Upscaling>(200), false) == Upscaling::Bilinear);
 
     // boot.cfg values.
     check(ParseUpscaling("bilinear") == Upscaling::Bilinear);
+    check(ParseUpscaling("nearest") == Upscaling::Nearest);
+    check(ParseUpscaling("pixel-art") == Upscaling::Nearest);
     check(ParseUpscaling("fsr") == Upscaling::FsrBalanced);
     check(ParseUpscaling("fsr-sharp") == Upscaling::FsrSharp);
     check(ParseUpscaling("fsr-balanced") == Upscaling::FsrBalanced);
