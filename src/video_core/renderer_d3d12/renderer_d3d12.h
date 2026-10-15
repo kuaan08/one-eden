@@ -191,6 +191,7 @@ private:
     ComPtr<ID3D12RootSignature> blit_root_signature;
     ComPtr<ID3D12PipelineState> blit_pipeline;
     D3D12_CPU_DESCRIPTOR_HANDLE linear_sampler{};
+    D3D12_CPU_DESCRIPTOR_HANDLE nearest_sampler{};
     ComPtr<ID3D12Resource> guest_texture;
     D3D12_CPU_DESCRIPTOR_HANDLE guest_srv{};
     u32 guest_width{};

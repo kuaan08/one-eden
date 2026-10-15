@@ -9,6 +9,7 @@
 #include "common/settings.h"
 #include "video_core/performance_overlay.h"
 #include "video_core/renderer_d3d12/d3d12_resource_allocator.h"
+#include "video_core/renderer_d3d12/d3d12_present_filter.h"
 #include "core/hle/service/acc/profile_manager.h"
 
 namespace EdenXbox {
@@ -118,6 +119,7 @@ ResolvedSystem ApplySystemSettings() {
 }
 
 void ApplyUpscaling(Upscaling upscaling) {
+    D3D12::SetNearestPresentFilterEnabled(upscaling == Upscaling::Nearest);
     const UpscalingSettings values = ToSettings(upscaling);
     Settings::values.scaling_filter.SetValue(values.filter);
     Settings::values.fsr_sharpening_slider.SetValue(values.fsr_sharpening_slider);

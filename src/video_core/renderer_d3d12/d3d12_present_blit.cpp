@@ -14,6 +14,7 @@
 #include "video_core/host_shaders/blit_color_float_frag_spv.h"
 #include "video_core/host_shaders/full_screen_triangle_vert_spv.h"
 #include "video_core/renderer_d3d12/d3d12_resource_utils.h"
+#include "video_core/renderer_d3d12/d3d12_present_filter.h"
 #include "video_core/renderer_d3d12/d3d12_present_orientation.h"
 #include "video_core/renderer_d3d12/renderer_d3d12.h"
 
@@ -112,6 +113,10 @@ bool RendererD3D12::CreateBlitPipeline() {
         };
         linear_sampler = sampler_descriptors.Allocate();
         dev->CreateSampler(&sampler, linear_sampler);
+        auto nearest_desc = sampler;
+        nearest_desc.Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
+        nearest_sampler = sampler_descriptors.Allocate();
+        dev->CreateSampler(&nearest_desc, nearest_sampler);
 
         LOG_INFO(Render,
                  "D3D12: blit pipeline built from translated SPIR-V (VS {} bytes, PS {} bytes)",
@@ -173,9 +178,14 @@ void RendererD3D12::RecordComposite(PresentFrame& frame, const CompositeSource& 
     if (fsr && !present_fsr.PrepareTarget(*fsr)) {
         fsr.reset();
     }
-    constexpr u64 LINEAR_SAMPLER_KEY = 0;
+    // FSR still uses linear sampling; nearest only affects the final 2D
+    // bilinear path, before overlay/UI composition.
+    const bool use_nearest = !fsr && NearestPresentFilterEnabled();
+    const u64 sampler_key = use_nearest ? 1 : 0;
+    const D3D12_CPU_DESCRIPTOR_HANDLE selected_sampler =
+        use_nearest ? nearest_sampler : linear_sampler;
     const D3D12_GPU_DESCRIPTOR_HANDLE sampler_table =
-        sampler_heap.GetTable({&LINEAR_SAMPLER_KEY, 1}, {&linear_sampler, 1});
+        sampler_heap.GetTable({&sampler_key, 1}, {&selected_sampler, 1});
     const std::array<D3D12_CPU_DESCRIPTOR_HANDLE, 2> srvs{source.srv, present_fsr.TargetSrv()};
     const u32 srv_count = fsr ? 2 : 1;
     const D3D12_GPU_DESCRIPTOR_HANDLE source_table =
