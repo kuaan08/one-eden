@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "eden_uwp/uwp_system_settings.h"
 
+#include <algorithm>
 #include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.Storage.h>
 #include <winrt/Windows.System.UserProfile.h>
@@ -11,6 +12,7 @@
 #include "video_core/renderer_d3d12/d3d12_resource_allocator.h"
 #include "video_core/renderer_d3d12/d3d12_present_filter.h"
 #include "video_core/renderer_d3d12/d3d12_present_skip.h"
+#include "video_core/renderer_d3d12/d3d12_cache_policy.h"
 #include "core/hle/service/acc/profile_manager.h"
 
 namespace EdenXbox {
@@ -31,6 +33,10 @@ constexpr auto SkipKey = L"system_xbox_present_skip";
 constexpr auto PresetKey = L"system_xbox_preset";
 constexpr auto CacheKey = L"system_xbox_disk_shader_cache";
 constexpr auto SpeedKey = L"system_xbox_speed_cap";
+constexpr auto OverlayFieldsKey = L"system_xbox_overlay_fields";
+constexpr auto OverlayPositionKey = L"system_xbox_overlay_position";
+constexpr auto OverlayScaleKey = L"system_xbox_overlay_scale";
+constexpr auto EarlyTextureGcKey = L"system_xbox_early_texture_gc";
 
 /// Saved as the enum's value, or -1 for "follow the system". A value that is not a selectable
 /// option (an older or newer build's) also falls back to the system.
@@ -63,6 +69,13 @@ SystemSettings LoadSystemSettings() {
             settings.user_name = SanitizeUserName(
                 winrt::unbox_value<winrt::hstring>(values.Lookup(UserNameKey)).c_str());
         if (values.HasKey(PerformanceStatsKey)) settings.show_performance_stats = winrt::unbox_value<bool>(values.Lookup(PerformanceStatsKey));
+        if (values.HasKey(OverlayFieldsKey))
+            settings.xbox_overlay_fields = static_cast<unsigned>(
+                winrt::unbox_value<int32_t>(values.Lookup(OverlayFieldsKey))) & 31u;
+        if (values.HasKey(OverlayPositionKey))
+            settings.xbox_overlay_position = winrt::unbox_value<int32_t>(values.Lookup(OverlayPositionKey)) == 1 ? 1u : 0u;
+        if (values.HasKey(OverlayScaleKey))
+            settings.xbox_overlay_scale = std::min(2, std::max(0, winrt::unbox_value<int32_t>(values.Lookup(OverlayScaleKey))));
         if (values.HasKey(AdultModsKey)) settings.show_adult_mods = winrt::unbox_value<bool>(values.Lookup(AdultModsKey));
         if (values.HasKey(PulseSessionsKey)) settings.pulse_sessions = winrt::unbox_value<bool>(values.Lookup(PulseSessionsKey));
         if (values.HasKey(UpscalingKey))
@@ -84,6 +97,8 @@ SystemSettings LoadSystemSettings() {
             settings.xbox_disk_shader_cache = winrt::unbox_value<bool>(values.Lookup(CacheKey));
         if (values.HasKey(SpeedKey))
             settings.xbox_speed_cap = winrt::unbox_value<bool>(values.Lookup(SpeedKey));
+        if (values.HasKey(EarlyTextureGcKey))
+            settings.xbox_early_texture_gc = winrt::unbox_value<bool>(values.Lookup(EarlyTextureGcKey));
     } catch (...) { /* Missing or invalid values keep following the system. */ }
     return settings;
 }
@@ -96,6 +111,9 @@ bool SaveSystemSettings(const SystemSettings& settings) {
         values.Insert(RegionKey, winrt::box_value(ChoiceValue(settings.region)));
         values.Insert(UserNameKey, winrt::box_value(winrt::hstring{SanitizeUserName(settings.user_name)}));
         values.Insert(PerformanceStatsKey, winrt::box_value(settings.show_performance_stats));
+        values.Insert(OverlayFieldsKey, winrt::box_value(static_cast<int32_t>(settings.xbox_overlay_fields)));
+        values.Insert(OverlayPositionKey, winrt::box_value(static_cast<int32_t>(settings.xbox_overlay_position)));
+        values.Insert(OverlayScaleKey, winrt::box_value(static_cast<int32_t>(settings.xbox_overlay_scale)));
         values.Insert(AdultModsKey, winrt::box_value(settings.show_adult_mods));
         values.Insert(PulseSessionsKey, winrt::box_value(settings.pulse_sessions));
         values.Insert(UpscalingKey, winrt::box_value(static_cast<int32_t>(settings.upscaling)));
@@ -107,6 +125,7 @@ bool SaveSystemSettings(const SystemSettings& settings) {
         values.Insert(PresetKey, winrt::box_value(static_cast<int32_t>(settings.xbox_preset)));
         values.Insert(CacheKey, winrt::box_value(settings.xbox_disk_shader_cache));
         values.Insert(SpeedKey, winrt::box_value(settings.xbox_speed_cap));
+        values.Insert(EarlyTextureGcKey, winrt::box_value(settings.xbox_early_texture_gc));
         return true;
     } catch (...) { return false; }
 }
@@ -128,6 +147,10 @@ ResolvedSystem ApplySystemSettings() {
     const auto locale = DetectSystemLocale();
     const auto settings = LoadSystemSettings();
     VideoCore::performance_overlay_enabled.store(settings.show_performance_stats, std::memory_order_relaxed);
+    VideoCore::performance_overlay_fields.store(settings.xbox_overlay_fields, std::memory_order_relaxed);
+    VideoCore::performance_overlay_position.store(settings.xbox_overlay_position, std::memory_order_relaxed);
+    VideoCore::performance_overlay_scale.store(settings.xbox_overlay_scale, std::memory_order_relaxed);
+    D3D12::SetXboxEarlyTextureGcEnabled(settings.xbox_early_texture_gc);
     SetUiTheme(settings.ui_theme);
     D3D12::SetXboxDedicatedDepthEnabled(settings.xbox_dedicated_depth);
     D3D12::SetXboxPresentInterval(XboxPresentInterval(settings.xbox_frame_skip));

@@ -19,7 +19,8 @@ namespace EdenXbox {
 struct SystemPage {
     enum Row : std::size_t { UserName, InterfaceLanguage, GameLanguage, Region,
     UiThemeChoice, XboxDepthFix, PerfPreset, InternalResolution, FastmemMode,
-    DisplayFrameSkip, DiskShaderCache, SpeedCap, AdultMods, PerformanceStats,
+    DisplayFrameSkip, DiskShaderCache, SpeedCap, HudFps, HudFrame, HudCpu, HudGpu,
+    HudMemory, HudPosition, HudScale, EarlyTextureGc, AdultMods, PerformanceStats,
     PulseSessions, ClearCache, RowCount };
 
     bool open{};
@@ -117,6 +118,31 @@ inline SystemPageEffect HandleSystemInput(SystemPage& page, SystemInput input) {
         settings.xbox_speed_cap = !settings.xbox_speed_cap;
         settings.xbox_preset = XboxPreset::Custom;
         return SystemPageEffect::Changed;
+    case Row::HudFps:
+        settings.xbox_overlay_fields ^= VideoCore::OverlayFps;
+        return SystemPageEffect::Changed;
+    case Row::HudFrame:
+        settings.xbox_overlay_fields ^= VideoCore::OverlayFrameTime;
+        return SystemPageEffect::Changed;
+    case Row::HudCpu:
+        settings.xbox_overlay_fields ^= VideoCore::OverlayCpu;
+        return SystemPageEffect::Changed;
+    case Row::HudGpu:
+        settings.xbox_overlay_fields ^= VideoCore::OverlayGpu;
+        return SystemPageEffect::Changed;
+    case Row::HudMemory:
+        settings.xbox_overlay_fields ^= VideoCore::OverlayMemory;
+        return SystemPageEffect::Changed;
+    case Row::HudPosition:
+        settings.xbox_overlay_position = settings.xbox_overlay_position == 0 ? 1 : 0;
+        return SystemPageEffect::Changed;
+    case Row::HudScale:
+        settings.xbox_overlay_scale = (settings.xbox_overlay_scale + (back ? 2u : 1u)) % 3u;
+        return SystemPageEffect::Changed;
+    case Row::EarlyTextureGc:
+        settings.xbox_early_texture_gc = !settings.xbox_early_texture_gc;
+        settings.xbox_preset = XboxPreset::Custom;
+        return SystemPageEffect::Changed;
     case Row::AdultMods:
         settings.show_adult_mods = !settings.show_adult_mods;
         return SystemPageEffect::Changed;
@@ -167,6 +193,14 @@ inline I18n::Text SystemRowTitle(SystemPage::Row row) {
     case SystemPage::DisplayFrameSkip:  return Text::DisplaySkipTitle;
     case SystemPage::DiskShaderCache:   return Text::DiskCacheTitle;
     case SystemPage::SpeedCap:          return Text::SpeedCapTitle;
+    case SystemPage::HudFps:            return Text::HudFpsTitle;
+    case SystemPage::HudFrame:          return Text::HudFrameTitle;
+    case SystemPage::HudCpu:            return Text::HudCpuTitle;
+    case SystemPage::HudGpu:            return Text::HudGpuTitle;
+    case SystemPage::HudMemory:         return Text::HudMemoryTitle;
+    case SystemPage::HudPosition:       return Text::HudPositionTitle;
+    case SystemPage::HudScale:          return Text::HudScaleTitle;
+    case SystemPage::EarlyTextureGc:    return Text::EarlyTextureGcTitle;
     case SystemPage::PerformanceStats:  return Text::PerformanceStats;
     case SystemPage::AdultMods:         return Text::ModsAdult;
     case SystemPage::PulseSessions:     return Text::PulseSessions;
@@ -189,6 +223,14 @@ inline I18n::Text SystemRowHint(SystemPage::Row row) {
     case SystemPage::DisplayFrameSkip:  return Text::DisplaySkipHint;
     case SystemPage::DiskShaderCache:   return Text::DiskCacheHint;
     case SystemPage::SpeedCap:          return Text::SpeedCapHint;
+    case SystemPage::HudFps:
+    case SystemPage::HudFrame:
+    case SystemPage::HudCpu:
+    case SystemPage::HudGpu:
+    case SystemPage::HudMemory:         return Text::HudFieldsHint;
+    case SystemPage::HudPosition:       return Text::HudPositionHint;
+    case SystemPage::HudScale:          return Text::HudScaleHint;
+    case SystemPage::EarlyTextureGc:    return Text::EarlyTextureGcHint;
     case SystemPage::PerformanceStats:  return Text::PerformanceStatsHint;
     case SystemPage::AdultMods:         return Text::ModsAdultHint;
     case SystemPage::PulseSessions:     return Text::PulseSessionsHint;
@@ -239,6 +281,24 @@ inline std::wstring SystemRowValue(const SystemPage& page, SystemPage::Row row) 
         return std::wstring{I18n::Tr(settings.xbox_disk_shader_cache ? Text::Yes : Text::No)};
     case SystemPage::SpeedCap:
         return std::wstring{I18n::Tr(settings.xbox_speed_cap ? Text::Yes : Text::No)};
+    case SystemPage::HudFps:
+    case SystemPage::HudFrame:
+    case SystemPage::HudCpu:
+    case SystemPage::HudGpu:
+    case SystemPage::HudMemory: {
+        const unsigned flag = row == SystemPage::HudFps ? VideoCore::OverlayFps :
+                              row == SystemPage::HudFrame ? VideoCore::OverlayFrameTime :
+                              row == SystemPage::HudCpu ? VideoCore::OverlayCpu :
+                              row == SystemPage::HudGpu ? VideoCore::OverlayGpu : VideoCore::OverlayMemory;
+        return std::wstring{I18n::Tr((settings.xbox_overlay_fields & flag) ? Text::Yes : Text::No)};
+    }
+    case SystemPage::HudPosition:
+        return std::wstring{I18n::Tr(settings.xbox_overlay_position == 1 ? Text::HudTopLeft : Text::HudTopRight)};
+    case SystemPage::HudScale:
+        return std::wstring{I18n::Tr(settings.xbox_overlay_scale == 0 ? Text::HudSmall :
+                                       settings.xbox_overlay_scale == 2 ? Text::HudLarge : Text::HudNormal)};
+    case SystemPage::EarlyTextureGc:
+        return std::wstring{I18n::Tr(settings.xbox_early_texture_gc ? Text::EarlyTextureGcOn : Text::EarlyTextureGcOff)};
     case SystemPage::PerformanceStats:
         return std::wstring{I18n::Tr(settings.show_performance_stats ? Text::Yes : Text::No)};
     case SystemPage::AdultMods:

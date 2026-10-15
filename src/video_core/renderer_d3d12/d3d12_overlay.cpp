@@ -138,36 +138,63 @@ void RendererD3D12::DrawPerformanceOverlay(CommandStream* cmd,
         const u64 cpu_ticks = ticks(kernel) + ticks(user);
         const u64 gpu_us = VideoCore::Perf::counters[
             static_cast<size_t>(VideoCore::Perf::Counter::GpuBusyUs)].load(std::memory_order_relaxed);
-        std::array<std::string, 4> lines{"FPS --", "FRAME -- MS MAX --", "CPU --", "GPUQ --"};
-        if (!first && hud.frames != 0) {
-            const double frames = static_cast<double>(hud.frames);
-            lines[0] = fmt::format("FPS {:.1f}", frames * 1000.0 / elapsed_ms);
-            lines[1] = fmt::format("FRAME {:.1f} MS MAX {:.1f}", hud.last_frame_ms, hud.max_frame_ms);
-            // Process CPU includes all threads; show equivalent cores rather than an ambiguous %.
-            if (cpu_valid && hud.cpu_valid && cpu_ticks >= hud.cpu_ticks) {
+        const unsigned fields = VideoCore::performance_overlay_fields.load(std::memory_order_relaxed);
+        std::vector<std::string> lines;
+        lines.reserve(5);
+        const double frames = static_cast<double>(hud.frames);
+        const bool sampled = !first && hud.frames != 0 && elapsed_ms > 0.0;
+        if (fields & VideoCore::OverlayFps) {
+            lines.push_back(sampled ? fmt::format("FPS {:.1f}", frames * 1000.0 / elapsed_ms)
+                                    : "FPS --");
+        }
+        if (fields & VideoCore::OverlayFrameTime) {
+            lines.push_back(sampled ? fmt::format("FRAME {:.1f} MS MAX {:.1f}",
+                                                   hud.last_frame_ms, hud.max_frame_ms)
+                                    : "FRAME -- MS MAX --");
+        }
+        if (fields & VideoCore::OverlayCpu) {
+            // Whole-process CPU time, in equivalent cores: not an individual Jaguar core's load.
+            if (sampled && cpu_valid && hud.cpu_valid && cpu_ticks >= hud.cpu_ticks) {
                 const double cpu_ms = static_cast<double>(cpu_ticks - hud.cpu_ticks) / 10000.0;
-                lines[2] = fmt::format("CPU {:.2f} CORES {:.1f} MS/F", cpu_ms / elapsed_ms,
-                                       cpu_ms / frames);
-            }
-            if (scheduler.HasGpuTimestamps()) {
-                const double gpu_ms = static_cast<double>(gpu_us - hud.gpu_us) / 1000.0;
-                // Completed direct-queue time, delayed by frames in flight; not whole-GPU utilization.
-                lines[3] = fmt::format("GPUQ {:.0f}% {:.1f} MS/F", gpu_ms * 100.0 / elapsed_ms,
-                                       gpu_ms / frames);
+                lines.push_back(fmt::format("CPU {:.2f} CORES {:.1f} MS/F",
+                                            cpu_ms / elapsed_ms, cpu_ms / frames));
+            } else {
+                lines.emplace_back("CPU --");
             }
         }
-        const LONG cell = std::max<LONG>(2, static_cast<LONG>(swapchain.Height()) / 360);
+        if (fields & VideoCore::OverlayGpu) {
+            // Completed direct queue GPU time, NOT overall console GPU utilization.
+            if (sampled && scheduler.HasGpuTimestamps() && gpu_us >= hud.gpu_us) {
+                const double gpu_ms = static_cast<double>(gpu_us - hud.gpu_us) / 1000.0;
+                lines.push_back(fmt::format("GPUQ {:.0f}% {:.1f} MS/F",
+                                            gpu_ms * 100.0 / elapsed_ms, gpu_ms / frames));
+            } else {
+                lines.emplace_back("GPUQ --");
+            }
+        }
+        if (fields & VideoCore::OverlayMemory) {
+            const auto memory = device.QueryCacheMemoryPressure();
+            lines.push_back(memory.app_limit
+                ? fmt::format("RAM {} / {} MIB", memory.app_used >> 20, memory.app_limit >> 20)
+                : "RAM -- MIB");
+        }
+        const unsigned scale = std::min(2u, VideoCore::performance_overlay_scale.load(std::memory_order_relaxed));
+        const LONG cell = std::max<LONG>(2, static_cast<LONG>(swapchain.Height()) / 360) +
+                          static_cast<LONG>(scale) - 1;
         const LONG pad = 3 * cell;
-        const LONG right = static_cast<LONG>(swapchain.Width()) - 8 * cell;
         const LONG top = 8 * cell;
         size_t chars = 0;
-        for (const auto& line : lines) {
-            chars = std::max(chars, line.size());
-        }
-        const LONG left = right - TextWidth(chars, cell) - 2 * pad;
-        hud.panel = {left, top, right, top + 2 * pad + 4 * 7 * cell - 2 * cell};
+        for (const auto& line : lines) chars = std::max(chars, line.size());
+        const LONG width = TextWidth(chars, cell) + 2 * pad;
+        const bool left_side = VideoCore::performance_overlay_position.load(std::memory_order_relaxed) == 1;
+        const LONG left = left_side ? 8 * cell
+                                   : static_cast<LONG>(swapchain.Width()) - 8 * cell - width;
+        const LONG right = left + width;
+        hud.panel = lines.empty() ? D3D12_RECT{}
+            : D3D12_RECT{left, top, right,
+                         top + 2 * pad + static_cast<LONG>(lines.size()) * 7 * cell - 2 * cell};
         hud.text.clear();
-        hud.text.reserve(1536);
+        hud.text.reserve(2048);
         for (size_t row = 0; row < lines.size(); ++row) {
             AppendText(hud.text, lines[row], left + pad,
                        top + pad + static_cast<LONG>(row) * 7 * cell, cell);
@@ -179,7 +206,8 @@ void RendererD3D12::DrawPerformanceOverlay(CommandStream* cmd,
         hud.frames = 0;
         hud.max_frame_ms = 0;
     }
-    ClearRects(cmd, rtv, OVERLAY_PANEL, {&hud.panel, 1});
+    if (hud.panel.right > hud.panel.left && hud.panel.bottom > hud.panel.top)
+        ClearRects(cmd, rtv, OVERLAY_PANEL, {&hud.panel, 1});
     ClearRects(cmd, rtv, OVERLAY_TEXT, hud.text);
     DrawTraceIndicator(cmd, rtv);
 }

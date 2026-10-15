@@ -471,6 +471,9 @@ private:
             ConfigurationIcon::Region, ConfigurationIcon::Settings, ConfigurationIcon::Settings,
             ConfigurationIcon::Settings, ConfigurationIcon::Settings, ConfigurationIcon::Settings,
             ConfigurationIcon::Settings, ConfigurationIcon::Settings, ConfigurationIcon::Settings,
+            ConfigurationIcon::Settings, ConfigurationIcon::Settings, ConfigurationIcon::Settings,
+            ConfigurationIcon::Settings, ConfigurationIcon::Settings, ConfigurationIcon::Settings,
+            ConfigurationIcon::Settings, ConfigurationIcon::Settings,
             ConfigurationIcon::Mods, ConfigurationIcon::Settings, ConfigurationIcon::Archive,
             ConfigurationIcon::Cache};
         const std::size_t first = L::FirstRow(page.selected);
@@ -490,7 +493,8 @@ private:
                                  row == SystemPage::UiThemeChoice || row == SystemPage::XboxDepthFix ||
                                  row == SystemPage::PerfPreset || row == SystemPage::InternalResolution ||
                                  row == SystemPage::FastmemMode || row == SystemPage::DisplayFrameSkip ||
-                                 row == SystemPage::DiskShaderCache || row == SystemPage::SpeedCap;
+                                 row == SystemPage::DiskShaderCache || row == SystemPage::SpeedCap ||
+                                 (row >= SystemPage::HudFps && row <= SystemPage::EarlyTextureGc);
             if (choice) {
                 // "< value >": arrows say left/right changes it, as in the controller panel.
                 Chevron(L::RowX + 486, middle, accent, true);

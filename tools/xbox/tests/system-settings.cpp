@@ -119,10 +119,31 @@ int main() {
     // New compatibility controls are between depth and AdultMods.
     for (const auto expected : {SystemPage::PerfPreset, SystemPage::InternalResolution,
                                 SystemPage::FastmemMode, SystemPage::DisplayFrameSkip,
-                                SystemPage::DiskShaderCache, SystemPage::SpeedCap}) {
+                                SystemPage::DiskShaderCache, SystemPage::SpeedCap,
+                                SystemPage::HudFps, SystemPage::HudFrame, SystemPage::HudCpu,
+                                SystemPage::HudGpu, SystemPage::HudMemory, SystemPage::HudPosition,
+                                SystemPage::HudScale, SystemPage::EarlyTextureGc}) {
         check(HandleSystemInput(page, SystemInput::Down) == SystemPageEffect::None);
         check(page.selected == expected);
     }
+    check(SystemRowValue(page, SystemPage::EarlyTextureGc) == L"Normal (seguro)");
+    check(HandleSystemInput(page, SystemInput::Confirm) == SystemPageEffect::Changed);
+    check(page.settings.xbox_early_texture_gc);
+    check(SystemRowValue(page, SystemPage::EarlyTextureGc) == L"Liberar cedo (experimental)");
+    page.selected = SystemPage::HudFps;
+    const unsigned original_fields = page.settings.xbox_overlay_fields;
+    check(HandleSystemInput(page, SystemInput::Confirm) == SystemPageEffect::Changed);
+    check(page.settings.xbox_overlay_fields == (original_fields ^ VideoCore::OverlayFps));
+    page.selected = SystemPage::HudMemory;
+    check(HandleSystemInput(page, SystemInput::Confirm) == SystemPageEffect::Changed);
+    check((page.settings.xbox_overlay_fields & VideoCore::OverlayMemory) != 0);
+    page.selected = SystemPage::HudPosition;
+    check(HandleSystemInput(page, SystemInput::Right) == SystemPageEffect::Changed);
+    check(page.settings.xbox_overlay_position == 1);
+    page.selected = SystemPage::HudScale;
+    check(HandleSystemInput(page, SystemInput::Right) == SystemPageEffect::Changed);
+    check(page.settings.xbox_overlay_scale == 2);
+    page.selected = SystemPage::EarlyTextureGc;
     check(HandleSystemInput(page, SystemInput::Down) == SystemPageEffect::None &&
           page.selected == SystemPage::AdultMods);
     check(SystemRowValue(page, SystemPage::AdultMods) == L"Ocultos");

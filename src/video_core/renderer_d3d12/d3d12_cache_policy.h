@@ -2,8 +2,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include <algorithm>
+#include <atomic>
 #include "video_core/texture_cache/gc_policy.h"
 namespace D3D12 {
+// Optional low-priority early eviction of unused images. Never frees textures still in use.
+inline std::atomic_bool xbox_early_texture_gc_enabled{false};
+inline void SetXboxEarlyTextureGcEnabled(bool enabled) noexcept {
+    xbox_early_texture_gc_enabled.store(enabled, std::memory_order_release);
+}
 struct CacheMemorySnapshot {
     u64 app_used{}, app_limit{}, gpu_used{}, gpu_budget{};
     [[nodiscard]] bool Known() const { return app_limit != 0 || gpu_budget != 0; }

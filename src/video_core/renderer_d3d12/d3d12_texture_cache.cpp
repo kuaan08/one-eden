@@ -316,8 +316,16 @@ std::optional<VideoCommon::TextureGcPolicy> TextureCacheRuntime::GetTextureGcPol
                                     static_cast<u64>(pressure_level));
     }
     if (!pressure_snapshot.Known()) return std::nullopt;
-    return CachePressureController::Policy(pressure_level, second_pass,
+    auto gc = CachePressureController::Policy(pressure_level, second_pass,
         CachePressureController::RequiresImmediateRecovery(pressure_snapshot));
+    if (!second_pass && pressure_level == CachePressure::Normal &&
+        xbox_early_texture_gc_enabled.load(std::memory_order_acquire)) {
+        // Only discard idle unmodified textures sooner. Do not force readbacks or expensive
+        // reloads, and keep the original 1 ms GC budget and emergency recovery intact.
+        gc.min_age = 45;
+        gc.iterations = 8;
+    }
+    return gc;
 }
 u64 TextureCacheRuntime::GetDeviceLocalMemory() const { return device.CacheMemoryBudget(); }
 u64 TextureCacheRuntime::GetDeviceMemoryUsage() const {

@@ -33,6 +33,9 @@ struct SystemSettings {
     std::optional<Settings::Region> region;           ///< nullopt follows the system.
     std::wstring user_name;                           ///< Empty keeps the default name.
     bool show_performance_stats{}; ///< Persistent global HUD preference, off on first install.
+    unsigned xbox_overlay_fields{VideoCore::DefaultOverlayFields}; ///< Select FPS/CPU/GPU/RAM separately.
+    unsigned xbox_overlay_position{}; ///< 0 = top right; 1 = top left.
+    unsigned xbox_overlay_scale{1}; ///< 0 small, 1 medium, 2 large.
     bool show_adult_mods{};                           ///< The mods store lists mods rated for adults.
     bool pulse_sessions{true}; ///< Back to home keeps the game where it is (pulse_sessions.h).
     Upscaling upscaling{Upscaling::Bilinear};         ///< Set from the in-game menu.
@@ -44,6 +47,7 @@ struct SystemSettings {
     XboxPreset xbox_preset{XboxPreset::Balanced};
     bool xbox_disk_shader_cache{true};
     bool xbox_speed_cap{true};
+    bool xbox_early_texture_gc{}; ///< Experimental: evict unused, unmodified textures earlier.
 
     bool operator==(const SystemSettings&) const = default;
 };
@@ -57,6 +61,7 @@ inline void ApplyXboxPreset(SystemSettings& s, XboxPreset preset) {
     s.xbox_frame_skip = XboxFrameSkip::Off;
     s.xbox_disk_shader_cache = true;
     s.xbox_speed_cap = true;
+    s.xbox_early_texture_gc = false; // All presets start from the safe cache policy.
     switch (preset) {
     case XboxPreset::TwoD: s.xbox_resolution = R::Res3_4X; break;
     case XboxPreset::Experimental3D:
