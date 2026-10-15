@@ -106,6 +106,8 @@ std::optional<std::string> ShowGameLibrary(void* core_window, unsigned width, un
     panel.keyboard.bindings = LoadKeyboardBindings();
     auto capture_until = std::chrono::steady_clock::time_point{};
     std::wstring notice; // Library scan/metadata messages only.
+    std::wstring update_banner; // Visible on the library home screen when a new release appears.
+    auto update_banner_until = std::chrono::steady_clock::time_point{};
     auto keyboard_notice_until = std::chrono::steady_clock::time_point{};
     auto controller_notice_until = std::chrono::steady_clock::time_point{};
     auto system_notice_until = std::chrono::steady_clock::time_point{};
@@ -518,6 +520,8 @@ std::optional<std::string> ShowGameLibrary(void* core_window, unsigned width, un
                 const std::wstring version = std::to_wstring(v[0]) + L"." + std::to_wstring(v[1]) +
                     L"." + std::to_wstring(v[2]) + L"." + std::to_wstring(v[3]);
                 system_page.notice = I18n::Format(T::UpdateAvailable, {version});
+                update_banner = system_page.notice;
+                update_banner_until = now + std::chrono::seconds{20};
                 break;
             }
             case Updates::Status::UpToDate: system_page.notice = Tr(T::UpdateUpToDate); break;
@@ -526,6 +530,9 @@ std::optional<std::string> ShowGameLibrary(void* core_window, unsigned width, un
             }
             system_notice_until = now + std::chrono::seconds{20};
             dirty = true;
+        }
+        if (!update_banner.empty() && now >= update_banner_until) {
+            update_banner.clear(); dirty = true;
         }
         if (!panel.keyboard.notice.empty() && now >= keyboard_notice_until) {
             panel.keyboard.notice.clear(); dirty = true;
@@ -1326,7 +1333,8 @@ std::optional<std::string> ShowGameLibrary(void* core_window, unsigned width, un
                 game_options, game_options.open && game_options.game < scan.entries.size() ? &scan.entries[game_options.game] : nullptr,
                 cheat_session ? &*cheat_session : nullptr, cheats_page, options_notice, content_session.get(),
                 mod_session.get(), &mods_page};
-            canvas->Draw({scan, selected, loading, settings, setting_row, options, notice, panel,
+            canvas->Draw({scan, selected, loading, settings, setting_row, options,
+                           update_banner.empty() ? notice : update_banner, panel,
                           configuration, system_page, options_view, missing_content});
             dirty = false;
         }
