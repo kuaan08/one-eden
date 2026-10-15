@@ -161,8 +161,11 @@ void RendererD3D12::Composite(std::span<const Tegra::FramebufferConfig> framebuf
     // Experimental display-frame skip. Guest GPU commands are NOT skipped.
     static thread_local unsigned presentation_count = 0;
     const unsigned interval = XboxPresentInterval();
-    if (interval > 1 && (presentation_count++ % interval) != 0) return;
-    if (!present_failed) {
+    // Skipping presentation must NOT skip the end-of-frame GPU/cache housekeeping.
+    // The previous early return bypassed rasterizer.TickFrame(), delaying texture GC,
+    // fence/frame accounting and the frontend's frame-completion notification.
+    const bool skip_present = interval > 1 && (presentation_count++ % interval) != 0;
+    if (!skip_present && !present_failed) {
         try {
             if (std::optional<std::string> error = present_manager.TakeError()) {
                 throw std::runtime_error(*error);
