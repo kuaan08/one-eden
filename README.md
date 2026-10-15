@@ -144,7 +144,7 @@ Core/frontend code lives under `src/eden_uwp/` and includes game management, con
 ## Localization, themes and experimental graphics settings
 
 The native UWP frontend currently includes **English, Spanish and Brazilian Portuguese
-(pt-BR)**. All 469 catalog entries are translated for the Portuguese-Brazil interface.
+(pt-BR)**. All 478 current UI catalog entries are translated for the Portuguese-Brazil interface.
 Interface language and the emulated Nintendo Switch game language are separate choices:
 games only display a language if their own files support it.
 
