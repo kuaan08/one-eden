@@ -26,6 +26,7 @@ constexpr auto AdultModsKey = L"system_show_adult_mods";
 constexpr auto PulseSessionsKey = L"system_pulse_sessions";
 constexpr auto UpscalingKey = L"system_upscaling";
 constexpr auto ThemeKey = L"system_ui_theme";
+constexpr auto AutoUpdateKey = L"system_auto_update_check";
 constexpr auto DedicatedDepthKey = L"system_xbox_dedicated_depth";
 constexpr auto ResolutionKey = L"system_xbox_resolution";
 constexpr auto FastmemKey = L"system_xbox_fastmem";
@@ -85,6 +86,8 @@ SystemSettings LoadSystemSettings() {
                                      .value_or(Upscaling::Bilinear);
         if (values.HasKey(ThemeKey))
             settings.ui_theme = UiThemeFromValue(winrt::unbox_value<int32_t>(values.Lookup(ThemeKey)));
+        if (values.HasKey(AutoUpdateKey))
+            settings.auto_check_updates = winrt::unbox_value<bool>(values.Lookup(AutoUpdateKey));
         if (values.HasKey(DedicatedDepthKey))
             settings.xbox_dedicated_depth = winrt::unbox_value<bool>(values.Lookup(DedicatedDepthKey));
         if (values.HasKey(ResolutionKey))
@@ -124,6 +127,7 @@ bool SaveSystemSettings(const SystemSettings& settings) {
         values.Insert(PulseSessionsKey, winrt::box_value(settings.pulse_sessions));
         values.Insert(UpscalingKey, winrt::box_value(static_cast<int32_t>(settings.upscaling)));
         values.Insert(ThemeKey, winrt::box_value(static_cast<int32_t>(settings.ui_theme)));
+        values.Insert(AutoUpdateKey, winrt::box_value(settings.auto_check_updates));
         values.Insert(DedicatedDepthKey, winrt::box_value(settings.xbox_dedicated_depth));
         values.Insert(ResolutionKey, winrt::box_value(static_cast<int32_t>(settings.xbox_resolution)));
         values.Insert(FastmemKey, winrt::box_value(static_cast<int32_t>(settings.xbox_fastmem)));

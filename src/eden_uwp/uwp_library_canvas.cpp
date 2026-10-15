@@ -469,6 +469,7 @@ private:
         static constexpr std::array<ConfigurationIcon, SystemPage::RowCount> icons{
             ConfigurationIcon::User, ConfigurationIcon::Language, ConfigurationIcon::Controller,
             ConfigurationIcon::Region, ConfigurationIcon::Settings, ConfigurationIcon::Settings,
+            ConfigurationIcon::Settings, ConfigurationIcon::Settings,
             ConfigurationIcon::Settings, ConfigurationIcon::Settings, ConfigurationIcon::Settings,
             ConfigurationIcon::Settings, ConfigurationIcon::Settings, ConfigurationIcon::Settings,
             ConfigurationIcon::Settings, ConfigurationIcon::Settings, ConfigurationIcon::Settings,
@@ -492,6 +493,7 @@ private:
                                 row == SystemPage::Region || row == SystemPage::AdultMods || row == SystemPage::PerformanceStats ||
                                 row == SystemPage::PulseSessions ||
                                  row == SystemPage::UiThemeChoice || row == SystemPage::XboxDepthFix ||
+                                 row == SystemPage::AutoUpdateCheck ||
                                  row == SystemPage::PerfPreset || row == SystemPage::InternalResolution ||
                                  row == SystemPage::FastmemMode || row == SystemPage::DisplayFrameSkip ||
                                  row == SystemPage::DiskShaderCache || row == SystemPage::SpeedCap ||

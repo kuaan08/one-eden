@@ -18,7 +18,7 @@ namespace EdenXbox {
 
 struct SystemPage {
     enum Row : std::size_t { UserName, InterfaceLanguage, GameLanguage, Region,
-    UiThemeChoice, XboxDepthFix, PerfPreset, InternalResolution, FastmemMode,
+    UiThemeChoice, CheckUpdates, AutoUpdateCheck, XboxDepthFix, PerfPreset, InternalResolution, FastmemMode,
     DisplayFrameSkip, DiskShaderCache, SpeedCap, JitCacheSize, PipelineEviction, HudFps, HudFrame, HudCpu, HudGpu,
     HudMemory, HudPosition, HudScale, EarlyTextureGc, AdultMods, PerformanceStats,
     PulseSessions, ClearCache, RowCount };
@@ -38,6 +38,7 @@ enum class SystemPageEffect : std::uint8_t {
     EditName,   ///< The name editor opened.
     NameDone,   ///< The editor closed with a new name in settings: save and apply.
     ClearCache, ///< Clear the library cache.
+    CheckUpdates, ///< Start a read-only GitHub Releases query.
 };
 
 enum class SystemInput : std::uint8_t { Up, Down, Left, Right, Confirm, Back };
@@ -91,6 +92,11 @@ inline SystemPageEffect HandleSystemInput(SystemPage& page, SystemInput input) {
         return SystemPageEffect::Changed;
     case Row::UiThemeChoice:
         settings.ui_theme = StepUiTheme(settings.ui_theme, back);
+        return SystemPageEffect::Changed;
+    case Row::CheckUpdates:
+        return input == SystemInput::Confirm ? SystemPageEffect::CheckUpdates : SystemPageEffect::None;
+    case Row::AutoUpdateCheck:
+        settings.auto_check_updates = !settings.auto_check_updates;
         return SystemPageEffect::Changed;
     case Row::XboxDepthFix:
         settings.xbox_dedicated_depth = !settings.xbox_dedicated_depth;
@@ -194,6 +200,8 @@ inline I18n::Text SystemRowTitle(SystemPage::Row row) {
     case SystemPage::GameLanguage:      return Text::GameLanguage;
     case SystemPage::Region:            return Text::ConsoleRegion;
     case SystemPage::UiThemeChoice:     return Text::ThemeTitle;
+    case SystemPage::CheckUpdates:      return Text::UpdateCheckTitle;
+    case SystemPage::AutoUpdateCheck:   return Text::UpdateAutoTitle;
     case SystemPage::XboxDepthFix:      return Text::XboxDepthFixTitle;
     case SystemPage::PerfPreset:        return Text::PerfPresetTitle;
     case SystemPage::InternalResolution:return Text::InternalResolutionTitle;
@@ -226,6 +234,8 @@ inline I18n::Text SystemRowHint(SystemPage::Row row) {
     case SystemPage::GameLanguage:      return Text::GameLanguageHint;
     case SystemPage::Region:            return Text::ConsoleRegionHint;
     case SystemPage::UiThemeChoice:     return Text::ThemeHint;
+    case SystemPage::CheckUpdates:      return Text::UpdateCheckHint;
+    case SystemPage::AutoUpdateCheck:   return Text::UpdateAutoHint;
     case SystemPage::XboxDepthFix:      return Text::XboxDepthFixHint;
     case SystemPage::PerfPreset:        return Text::PerfPresetHint;
     case SystemPage::InternalResolution:return Text::InternalResolutionHint;
@@ -273,6 +283,9 @@ inline std::wstring SystemRowValue(const SystemPage& page, SystemPage::Row row) 
     case SystemPage::UiThemeChoice:
         return std::wstring{I18n::Tr(settings.ui_theme == UiTheme::XboxGreen ? Text::ThemeXboxGreen :
             settings.ui_theme == UiTheme::Amoled ? Text::ThemeAmoled : Text::ThemeEden)};
+    case SystemPage::CheckUpdates: return {};
+    case SystemPage::AutoUpdateCheck:
+        return std::wstring{I18n::Tr(settings.auto_check_updates ? Text::Yes : Text::No)};
     case SystemPage::XboxDepthFix:
         return std::wstring{I18n::Tr(settings.xbox_dedicated_depth ? Text::Yes : Text::No)};
     case SystemPage::PerfPreset:

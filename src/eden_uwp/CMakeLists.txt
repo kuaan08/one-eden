@@ -19,6 +19,8 @@ add_executable(eden-uwp WIN32
     uwp_input.cpp
     uwp_input.h
     uwp_library.cpp
+    update_checker.cpp
+    update_checker.h
     uwp_library_canvas.cpp
     uwp_library_canvas.h
     uwp_library.h

@@ -547,5 +547,14 @@ const Catalog EnglishCatalog = MakeCatalog({
     {Text::JitCacheHint, L"64 / 128 / 192 / 256 MiB · restart game"},
     {Text::PipelineEvictTitle, L"Release idle graphics pipelines"},
     {Text::PipelineEvictHint, L"Lower RAM when on · restart game"},
+    {Text::UpdateCheckTitle, L"Check for updates"},
+    {Text::UpdateCheckHint, L"GitHub Releases · install via Xbox Device Portal"},
+    {Text::UpdateAutoTitle, L"Check updates on startup"},
+    {Text::UpdateAutoHint, L"Notifications only · no silent APPX installation"},
+    {Text::UpdateChecking, L"Checking GitHub Releases..."},
+    {Text::UpdateAvailable, L"Version {0} available · APPX on GitHub Releases"},
+    {Text::UpdateUpToDate, L"This app is up to date."},
+    {Text::UpdateNoRelease, L"No Xbox One Releases have been published yet."},
+    {Text::UpdateNetworkError, L"Could not check updates · check your connection."},
 });
 } // namespace EdenXbox::I18n

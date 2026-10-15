@@ -41,6 +41,7 @@ struct SystemSettings {
     bool pulse_sessions{true}; ///< Back to home keeps the game where it is (pulse_sessions.h).
     Upscaling upscaling{Upscaling::Bilinear};         ///< Set from the in-game menu.
     UiTheme ui_theme{UiTheme::Eden};                   ///< Immediate frontend theme.
+    bool auto_check_updates{true}; ///< Background check at startup; no silent installation.
     bool xbox_dedicated_depth{true};                  ///< Requires starting a new game.
     Settings::ResolutionSetup xbox_resolution{Settings::ResolutionSetup::Res1X};
     XboxFastmem xbox_fastmem{XboxFastmem::Off};

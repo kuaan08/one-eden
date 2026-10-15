@@ -572,6 +572,15 @@ enum class Text : std::uint16_t {
     JitCacheHint,
     PipelineEvictTitle,
     PipelineEvictHint,
+    UpdateCheckTitle,
+    UpdateCheckHint,
+    UpdateAutoTitle,
+    UpdateAutoHint,
+    UpdateChecking,
+    UpdateAvailable,
+    UpdateUpToDate,
+    UpdateNoRelease,
+    UpdateNetworkError,
 
 
     Count
