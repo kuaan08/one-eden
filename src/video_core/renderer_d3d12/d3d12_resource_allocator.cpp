@@ -9,6 +9,7 @@
 #include "video_core/renderer_d3d12/d3d12_resource_allocator.h"
 #include "video_core/renderer_d3d12/d3d12_heap_packing.h"
 #include "video_core/renderer_d3d12/d3d12_scheduler.h"
+#include "video_core/renderer_d3d12/d3d12_shader_compiler.h"
 
 #include <algorithm>
 #include <array>
@@ -129,11 +130,23 @@ TextureResourceAllocator::Resource TextureResourceAllocator::Create(
         return {};
     }
     const HeapClass heap_class = ClassOf(desc);
+    // Original Xbox One / D3D12 SM5.1: a reproducible first 3D draw AV in
+    // umd12ddi.dll follows CreatePlacedResource of a 1920x1080 depth buffer.
+    // Experimentally isolate only DSV resources in committed allocations:
+    // no pooled RT/DS heap aliasing, and the existing OOM retry path remains.
+    // Other textures and the 2D rendering path keep their existing allocator.
+    const bool separate_depth = IsSm5DeviceRequired() &&
+        (desc.Flags & D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL) != 0;
+    if (separate_depth && av_probe_log) {
+        LOG_WARNING(Render, "D3D12 AV-PROBE RESOURCE #{} SM5.1 dedicated depth allocation "
+                    "enabled (no placed RT/DS heap): format={} {}x{}",
+                    av_probe, static_cast<u32>(desc.Format), desc.Width, desc.Height);
+    }
     size_t selected = SIZE_MAX;
     u64 selected_offset{};
     u64 best_waste = UINT64_MAX;
 
-    {
+    if (!separate_depth) {
         std::scoped_lock lock{state->mutex};
         for (size_t index = 0; index < state->blocks.size() && best_waste != 0; ++index) {
             auto& block = state->blocks[index];

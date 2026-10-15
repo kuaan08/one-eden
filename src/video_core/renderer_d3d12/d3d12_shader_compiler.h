@@ -20,6 +20,9 @@ namespace D3D12 {
 
 // Set by Device::LogCapabilities before constructing the shader compiler.
 void SetSm5DeviceRequired(bool required);
+// The same hardware capability gate used by ShaderCompiler. This is read by
+// Xbox One-specific resource compatibility workarounds after device startup.
+[[nodiscard]] bool IsSm5DeviceRequired();
 
 /// Register spaces the translated shaders use for data Vulkan passes outside descriptor sets.
 /// Guest descriptors keep the Vulkan model: space = set, register = binding.

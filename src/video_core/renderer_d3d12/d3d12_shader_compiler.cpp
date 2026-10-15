@@ -95,6 +95,10 @@ void SetSm5DeviceRequired(bool required) {
     sm5_device_required.store(required, std::memory_order_release);
 }
 
+bool IsSm5DeviceRequired() {
+    return sm5_device_required.load(std::memory_order_acquire);
+}
+
 ShaderCompiler::ShaderCompiler() {
 #ifdef EDEN_XBOX_SM5_BACKEND
     if (sm5_device_required.load(std::memory_order_acquire)) {

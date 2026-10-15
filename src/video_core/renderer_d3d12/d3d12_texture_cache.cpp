@@ -471,6 +471,17 @@ Image::Image(TextureCacheRuntime& runtime_, const VideoCommon::ImageInfo& info_,
             throw std::runtime_error("D3D12: texture allocator returned no resource");
         }
     }
+    // Call-level checkpoints for the original Xbox One first-3D-draw crash.
+    // Previous logs ended after CreatePlacedResource of the first depth
+    // attachment. A driver AV can occur before any descriptor is created.
+    static std::atomic_uint depth_probe_counter{0};
+    const bool trace_depth = (resource_flags & D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL) &&
+                             depth_probe_counter.fetch_add(1, std::memory_order_relaxed) < 16;
+    if (trace_depth) {
+        LOG_WARNING(Render, "D3D12 DEPTH-PROBE BEGIN CheckRemovedAfter format={} {}x{} resource={}",
+                    static_cast<u32>(desc.Format), desc.Width, desc.Height,
+                    static_cast<void*>(resource.Get()));
+    }
     CheckRemovedAfter(runtime->device.Get(), [&] {
         return fmt::format("creating image {} ({} dim {} {}x{}x{} levels {} samples {} flags 0x{:x})",
                            info_.format, static_cast<u32>(desc.Format),
@@ -478,10 +489,19 @@ Image::Image(TextureCacheRuntime& runtime_, const VideoCommon::ImageInfo& info_,
                            desc.DepthOrArraySize, desc.MipLevels, desc.SampleDesc.Count,
                            static_cast<u32>(desc.Flags));
     });
+    if (trace_depth) {
+        LOG_WARNING(Render, "D3D12 DEPTH-PROBE END CheckRemovedAfter");
+        LOG_WARNING(Render, "D3D12 DEPTH-PROBE BEGIN GetCopyableFootprints format={} {}x{}",
+                    static_cast<u32>(desc.Format), desc.Width, desc.Height);
+    }
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};
     runtime->device.Get()->GetCopyableFootprints(&desc, 0, 1, 0, &footprint, nullptr, nullptr,
                                                  nullptr);
     footprint_format = footprint.Footprint.Format;
+    if (trace_depth) {
+        LOG_WARNING(Render, "D3D12 DEPTH-PROBE END GetCopyableFootprints format={} pitch={}",
+                    static_cast<u32>(footprint_format), footprint.Footprint.RowPitch);
+    }
 }
 
 Image::Image(const VideoCommon::NullImageParams& params) : VideoCommon::ImageBase{params} {}
