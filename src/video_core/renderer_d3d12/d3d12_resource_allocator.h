@@ -10,6 +10,8 @@
 namespace D3D12 {
 
 class Scheduler;
+// Settings are latched by the allocator at game startup: no mid-game changes.
+void SetXboxDedicatedDepthEnabled(bool enabled);
 
 /// Suballocates texture memory from reusable DEFAULT heaps. The allocation token returns its
 /// range only after the scheduler has released the placed resource at the same fence tick.
@@ -46,6 +48,7 @@ private:
     struct State;
     const Device& device;
     Scheduler& scheduler;
+    const bool xbox_dedicated_depth;
     std::shared_ptr<State> state;
 };
 
