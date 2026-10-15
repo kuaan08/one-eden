@@ -23,7 +23,7 @@ and additional documentation for the Xbox One hardware port.
   <img src="https://img.shields.io/badge/Target-Xbox%20One%20Fat-107c10" alt="Xbox One Fat">
 </p>
 
-> **Early development, not a stable release.** This project targets the **original Xbox One / Xbox One Fat (2013)** in **Developer Mode** with the UWP package classified as a **Game**. Some 2D games now produce images on real hardware; gameplay compatibility is limited. Game content currently appears **upside down** and some titles crash. No title has yet been verified as fully playable from start to finish.
+> **Early development, not a stable release.** This project targets the **original Xbox One / Xbox One Fat (2013)** in **Developer Mode** with the UWP package classified as a **Game**. Some 2D games now produce images on real hardware; gameplay compatibility is limited. The game-image orientation was corrected in the SM5.1 Xbox One frontend; some 3D titles still crash before their first frame. No title has yet been verified as fully playable from start to finish.
 
 This repository contains the **full emulator source code**, the UWP frontend, the native D3D12 renderer, the Xbox One shader compatibility work, build scripts, diagnostics, and documentation. It is an independent adaptation of the [original Eden Xbox UWP project](https://github.com/JulianDr14/eden-xbox), itself based on [Eden](https://github.com/eden-emulator/mirror). Please retain upstream copyright notices and attribution.
 
@@ -37,12 +37,12 @@ This repository contains the **full emulator source code**, the UWP frontend, th
 - **Environment:** Xbox Developer Mode, UWP x64, native Direct3D 12.
 - **GPU capability observed:** Shader Model **5.1**. The previously used Shader Model 6.4 DXIL game pipelines were rejected by the driver.
 - **Breakthrough:** minimal DXBC graphics pipelines passed; the experimental **SPIR-V → HLSL 5.1 → DXBC** path subsequently rendered actual 2D game scenes.
-- **Current issue:** the game's rendered output is vertically inverted; the FPS overlay is upright. Rotating the whole app would not be the correct fix.
+- **Recent fix:** the guest image is now upright independently from the overlay in the orientation-fixed Xbox One build. Full game compatibility is not yet verified.
 
 | Game tested | Observed result on Xbox One Fat | Remaining problems |
 | --- | --- | --- |
-| **Arcade Archives: CLU CLU LAND** | Displays menus and graphics; approximately **60 FPS** in one reported scene | Guest image upside down; entire game not verified |
-| **Sonic Mania** | Displays 2D images and animated scenes; around **17–19 FPS** in test photos | Guest image upside down; performance well below target |
+| **Arcade Archives: CLU CLU LAND** | Displays menus and graphics; approximately **60 FPS** in one earlier reported scene | Earlier tests had inverted output; whole game not verified after the orientation fix |
+| **Sonic Mania** | Renders upright in the orientation-fixed build, with FPS below the 60 FPS target | Slow emulated CPU thread; 3D and newer performance-option builds require on-console retesting |
 | **A Short Hike** | Starts loading but the emulator closes after roughly **44–46 seconds** in repeated tests | Reproducible memory access violation reading near address 0x78; 3D gameplay not reached |
 
 These are observations from limited hardware tests, **not a compatibility list or a promise of performance**. Different game versions, updates, scenes or future emulator builds may behave differently.
@@ -93,7 +93,7 @@ Key changes included in this fork:
 
 This does **not** mean every shader is supported. Resource register mapping, shader-stage interfaces, runtime constants, texture operations, compute programs, clip-space transformations and some Vulkan-derived semantics still require development and hardware validation.
 
-**The upside-down image is a known regression.** The game is inverted while the frontend statistics overlay is not; the planned correction targets the guest image transformation/presentation rather than rotating the whole UI.
+**The upside-down image regression was corrected in the dedicated SM5.1 presentation path.** The frontend overlay stays upright. The fix was confirmed for Sonic Mania on original Xbox One Fat; this does not validate all image-copy and 3D paths.
 
 ### Inside the renderer
 
@@ -222,7 +222,7 @@ and FPS in both variants, and only use the diagnostic variant for logs of
 3. Install the **APPX** and its **Microsoft.VCLibs.x64.14.00.appx** dependency if requested. Trust the matching signing certificate when required by the console.
 4. Set the UWP application classification to **Game** in Developer Mode. Do not use **App** for performance testing.
 5. Open Eden, import your own keys/firmware using the frontend, and add game dumps through the library, external storage or the app's LocalState folders.
-6. For first tests, try a simple 2D title and collect logs. **Expect inverted game output in the current experimental renderer.**
+6. For first tests, try a simple 2D title and collect logs. **The known 2D orientation issue is fixed; record any title-specific regression.**
 
 Do not upload or commit firmware, keys, personal data, copyrighted game files or console credentials to this repository.
 
@@ -270,7 +270,7 @@ The diagnostic build includes support for reporting **first-chance access violat
 
 ## Roadmap
 
-1. Fix the inverted guest image without rotating the correctly oriented UWP overlay.
+1. Keep the corrected guest image orientation working across 2D and 3D present paths.
 2. Identify and fix the reproducible 3D access violation using enhanced crash diagnostics.
 3. Improve shader-stage linking, resource bindings, texture/compute fallbacks and HLSL compatibility.
 4. Validate simple 3D scenes with logs, screenshots and repeatable tests.
