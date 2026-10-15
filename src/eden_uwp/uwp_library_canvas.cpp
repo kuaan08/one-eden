@@ -467,11 +467,13 @@ private:
         PageHeader(L::RowX, 99, ConfigurationIcon::Language, Tr(T::SystemTitle), Tr(T::SystemSubtitle));
         static constexpr std::array<ConfigurationIcon, SystemPage::RowCount> icons{
             ConfigurationIcon::User, ConfigurationIcon::Language, ConfigurationIcon::Controller,
-            ConfigurationIcon::Region, ConfigurationIcon::Mods, ConfigurationIcon::Settings, ConfigurationIcon::Archive,
+            ConfigurationIcon::Region, ConfigurationIcon::Settings, ConfigurationIcon::Settings,
+            ConfigurationIcon::Mods, ConfigurationIcon::Settings, ConfigurationIcon::Archive,
             ConfigurationIcon::Cache};
-        for (size_t i = 0; i < SystemPage::RowCount; ++i) {
+        const std::size_t first = L::FirstRow(page.selected);
+        for (size_t i = first; i < std::min(first + L::VisibleRows, static_cast<std::size_t>(SystemPage::RowCount)); ++i) {
             const auto row = static_cast<SystemPage::Row>(i);
-            const float y = L::RowTop + static_cast<float>(i) * L::RowStride;
+            const float y = L::RowTop + static_cast<float>(i - first) * L::RowStride;
             const bool active = i == page.selected;
             RowFrame(L::RowX, y, L::RowWidth, L::RowHeight, active, icons[i]);
             Text(Tr(SystemRowTitle(row)), L::RowX + 72, y + 4, 20, 0xf4f7fa, 420, 30, true);
@@ -481,7 +483,8 @@ private:
             const float middle = y + L::RowHeight / 2;
             const bool choice = row == SystemPage::InterfaceLanguage || row == SystemPage::GameLanguage ||
                                 row == SystemPage::Region || row == SystemPage::AdultMods || row == SystemPage::PerformanceStats ||
-                                row == SystemPage::PulseSessions;
+                                row == SystemPage::PulseSessions ||
+                                 row == SystemPage::UiThemeChoice || row == SystemPage::XboxDepthFix;
             if (choice) {
                 // "< value >": arrows say left/right changes it, as in the controller panel.
                 Chevron(L::RowX + 486, middle, accent, true);
@@ -494,6 +497,8 @@ private:
                 Text(value, L::RowX + 500, y + (L::RowHeight - 30) / 2, 19, active ? 0xf4f7fa : 0xd6e0ea,
                      right - 22 - (L::RowX + 500), 30, active, false, false, true);
         }
+        ScrollIndicator(L::RowX + L::RowWidth + 12, L::RowTop, L::RowStride * L::VisibleRows,
+                        first, L::VisibleRows, SystemPage::RowCount);
         if (!page.notice.empty()) Text(page.notice, L::RowX + 4, L::Notice, 16, 0x77e3bd, L::RowWidth - 20, 28);
         ControlPrompt(Navigation::Explore, Tr(T::Select), L::RowX + 4, L::Footer, 110);
         ControlPrompt(Navigation::Play, Tr(T::Change), L::RowX + 380, L::Footer, 110);
