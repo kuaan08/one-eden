@@ -10,9 +10,10 @@ PluralForm OneOrOther(std::uint64_t count) {
 }
 
 // English first: it is the fallback for any language and any missing text.
-const std::array<UiLanguage, 2> languages{{
+const std::array<UiLanguage, 3> languages{{
     {L"en", L"English", &EnglishCatalog, &OneOrOther},
     {L"es", L"Español", &SpanishCatalog, &OneOrOther},
+    {L"pt-BR", L"Português (Brasil)", &PortugueseBrazilianCatalog, &OneOrOther},
 }};
 } // namespace
 
