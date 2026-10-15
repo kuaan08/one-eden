@@ -27,6 +27,7 @@ namespace {
 constexpr u64 DEFAULT_BLOCK_SIZE = 64_MiB;
 // Captures the last successful Xbox One resource-driver API before a native AV.
 std::atomic_uint g_xbox_resource_probe_sequence{0};
+std::atomic_bool g_xbox_dedicated_depth_enabled{true};
 
 enum class HeapClass : u8 { Texture, RenderTarget };
 
@@ -104,8 +105,13 @@ struct TextureResourceAllocator::Allocation {
     }
 };
 
+void SetXboxDedicatedDepthEnabled(bool enabled) {
+    g_xbox_dedicated_depth_enabled.store(enabled, std::memory_order_release);
+}
 TextureResourceAllocator::TextureResourceAllocator(const Device& device_, Scheduler& scheduler_)
-    : device{device_}, scheduler{scheduler_}, state{std::make_shared<State>()} {}
+    : device{device_}, scheduler{scheduler_},
+      xbox_dedicated_depth{g_xbox_dedicated_depth_enabled.load(std::memory_order_acquire)},
+      state{std::make_shared<State>()} {}
 
 TextureResourceAllocator::~TextureResourceAllocator() = default;
 
@@ -135,7 +141,7 @@ TextureResourceAllocator::Resource TextureResourceAllocator::Create(
     // Experimentally isolate only DSV resources in committed allocations:
     // no pooled RT/DS heap aliasing, and the existing OOM retry path remains.
     // Other textures and the 2D rendering path keep their existing allocator.
-    const bool separate_depth = IsSm5DeviceRequired() &&
+    const bool separate_depth = IsSm5DeviceRequired() && xbox_dedicated_depth &&
         (desc.Flags & D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL) != 0;
     if (separate_depth && av_probe_log) {
         LOG_WARNING(Render, "D3D12 AV-PROBE RESOURCE #{} SM5.1 dedicated depth allocation "
