@@ -15,6 +15,12 @@ permissions:
   contents: read
   actions: read
 
+# New pushes supersede older source snapshots. Run only the newest UWP build,
+# avoiding unnecessary full MSVC rebuilds while retaining CPM source cache.
+concurrency:
+  group: one-eden-xbox-one-uwp-main
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: windows-2022
@@ -142,6 +148,30 @@ jobs:
           } finally { $zip.Dispose() }
           Write-Host "Xbox One SM5.1 diagnostic APPX complete and signed: $((Get-FileHash $file).Hash)"
           Write-Host 'This APPX uses SPIRV-Cross -> HLSL -> DXBC. It does not require the old Mesa DXIL translator.'
+
+      # A separate normal Game package for 2D performance comparisons. This
+      # uses the same compiled shaders but omits the in-process sampling profiler
+      # requested by -Profile on in the diagnostic package.
+      - name: Package Xbox One normal Game mode without profiling
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./tools/xbox/package-appx.ps1 -Variant normal -Library -ShaderModelProbe `
+            -BuildDir build-uwp -OutDir 'build-uwp/package/gameplay'
+          if (!(Test-Path 'build-uwp/package/gameplay/eden-xbox-normal.appx')) {
+            throw 'Missing Xbox One normal APPX'
+          }
+
+      - name: Upload normal Xbox One 2D Game package
+        uses: actions/upload-artifact@v4
+        with:
+          name: Eden-Xbox-OneFat-Gameplay-NoProfiler-APPX
+          path: |
+            build-uwp/package/gameplay/eden-xbox-normal.appx
+            build-uwp/package/gameplay/eden-xbox.cer
+            build-uwp/package/gameplay/Microsoft.VCLibs.x64.14.00.appx
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Upload installable Xbox One Shader Model probe diagnostic
         uses: actions/upload-artifact@v4
