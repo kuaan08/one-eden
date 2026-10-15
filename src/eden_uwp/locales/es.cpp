@@ -491,5 +491,14 @@ const Catalog SpanishCatalog = MakeCatalog({
     {Text::UpscalingFsrSharp, L"FSR 1 · nítido"},
     {Text::UpscalingFsrBalanced, L"FSR 1 · equilibrado"},
     {Text::UpscalingFsrSoft, L"FSR 1 · suave"},
+    {Text::ThemeTitle, L"Tema visual"},
+    {Text::ThemeHint, L"Se aplica al instante · Eden, verde Xbox, AMOLED"},
+    {Text::ThemeEden, L"Eden (predeterminado)"},
+    {Text::ThemeXboxGreen, L"Verde Xbox"},
+    {Text::ThemeAmoled, L"Negro AMOLED"},
+    {Text::XboxDepthFixTitle, L"Corrección experimental de profundidad 3D"},
+    {Text::XboxDepthFixHint, L"Texturas de profundidad dedicadas · reiniciar juego"},
+    {Text::RestartGameToApply, L"Guardado · reinicia el juego para aplicar"},
+    {Text::UpscalingNearest, L"Pixel art · píxel más cercano (2D)"},
 });
 } // namespace EdenXbox::I18n

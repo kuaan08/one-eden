@@ -475,5 +475,14 @@ const Catalog PortugueseBrazilianCatalog = MakeCatalog({
     {Text::ModsChangesOne, L"Altera {0} arquivo do jogo: {1}"},
     {Text::ModsChangesOther, L"Altera {0} arquivos do jogo: {1}"},
     {Text::ModsContentsHint, L"Cada arquivo substitui o arquivo do jogo no mesmo caminho. Arquivos extras, como readmes e imagens soltas, são ignorados."},
+    {Text::ThemeTitle, L"Tema visual"},
+    {Text::ThemeHint, L"Aplicado imediatamente · Eden, verde Xbox, AMOLED"},
+    {Text::ThemeEden, L"Eden (padrão)"},
+    {Text::ThemeXboxGreen, L"Verde Xbox"},
+    {Text::ThemeAmoled, L"Preto AMOLED"},
+    {Text::XboxDepthFixTitle, L"Correção experimental de profundidade 3D"},
+    {Text::XboxDepthFixHint, L"Texturas de profundidade dedicadas · reinicie o jogo"},
+    {Text::RestartGameToApply, L"Salvo · reinicie o jogo para aplicar"},
+    {Text::UpscalingNearest, L"Pixel art · vizinho mais próximo (2D)"},
 });
 } // namespace EdenXbox::I18n

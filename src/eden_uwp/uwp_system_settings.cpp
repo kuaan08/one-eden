@@ -8,6 +8,7 @@
 #include "common/logging.h"
 #include "common/settings.h"
 #include "video_core/performance_overlay.h"
+#include "video_core/renderer_d3d12/d3d12_resource_allocator.h"
 #include "core/hle/service/acc/profile_manager.h"
 
 namespace EdenXbox {
@@ -20,6 +21,8 @@ constexpr auto PerformanceStatsKey = L"system_show_performance_stats";
 constexpr auto AdultModsKey = L"system_show_adult_mods";
 constexpr auto PulseSessionsKey = L"system_pulse_sessions";
 constexpr auto UpscalingKey = L"system_upscaling";
+constexpr auto ThemeKey = L"system_ui_theme";
+constexpr auto DedicatedDepthKey = L"system_xbox_dedicated_depth";
 
 /// Saved as the enum's value, or -1 for "follow the system". A value that is not a selectable
 /// option (an older or newer build's) also falls back to the system.
@@ -57,6 +60,10 @@ SystemSettings LoadSystemSettings() {
         if (values.HasKey(UpscalingKey))
             settings.upscaling = UpscalingFromValue(winrt::unbox_value<int32_t>(values.Lookup(UpscalingKey)))
                                      .value_or(Upscaling::Bilinear);
+        if (values.HasKey(ThemeKey))
+            settings.ui_theme = UiThemeFromValue(winrt::unbox_value<int32_t>(values.Lookup(ThemeKey)));
+        if (values.HasKey(DedicatedDepthKey))
+            settings.xbox_dedicated_depth = winrt::unbox_value<bool>(values.Lookup(DedicatedDepthKey));
     } catch (...) { /* Missing or invalid values keep following the system. */ }
     return settings;
 }
@@ -72,6 +79,8 @@ bool SaveSystemSettings(const SystemSettings& settings) {
         values.Insert(AdultModsKey, winrt::box_value(settings.show_adult_mods));
         values.Insert(PulseSessionsKey, winrt::box_value(settings.pulse_sessions));
         values.Insert(UpscalingKey, winrt::box_value(static_cast<int32_t>(settings.upscaling)));
+        values.Insert(ThemeKey, winrt::box_value(static_cast<int32_t>(settings.ui_theme)));
+        values.Insert(DedicatedDepthKey, winrt::box_value(settings.xbox_dedicated_depth));
         return true;
     } catch (...) { return false; }
 }
@@ -93,6 +102,8 @@ ResolvedSystem ApplySystemSettings() {
     const auto locale = DetectSystemLocale();
     const auto settings = LoadSystemSettings();
     VideoCore::performance_overlay_enabled.store(settings.show_performance_stats, std::memory_order_relaxed);
+    SetUiTheme(settings.ui_theme);
+    D3D12::SetXboxDedicatedDepthEnabled(settings.xbox_dedicated_depth);
     ApplyUpscaling(settings.upscaling);
     const auto resolved = ResolveSystem(settings, locale);
     I18n::SetUiLanguage(*resolved.ui_language);

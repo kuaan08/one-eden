@@ -516,6 +516,15 @@ enum class Text : std::uint16_t {
     UpscalingFsrSharp,
     UpscalingFsrBalanced,
     UpscalingFsrSoft,
+    ThemeTitle,
+    ThemeHint,
+    ThemeEden,
+    ThemeXboxGreen,
+    ThemeAmoled,
+    XboxDepthFixTitle,
+    XboxDepthFixHint,
+    RestartGameToApply,
+    UpscalingNearest,
 
 
     Count

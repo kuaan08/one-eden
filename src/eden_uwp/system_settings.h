@@ -18,6 +18,7 @@
 #include "common/settings_enums.h"
 #include "eden_uwp/localization.h"
 #include "eden_uwp/upscaling.h"
+#include "eden_uwp/ui_theme.h"
 
 namespace EdenXbox {
 
@@ -34,6 +35,8 @@ struct SystemSettings {
     bool show_adult_mods{};                           ///< The mods store lists mods rated for adults.
     bool pulse_sessions{true}; ///< Back to home keeps the game where it is (pulse_sessions.h).
     Upscaling upscaling{Upscaling::Bilinear};         ///< Set from the in-game menu.
+    UiTheme ui_theme{UiTheme::Eden};                   ///< Immediate frontend theme.
+    bool xbox_dedicated_depth{true};                  ///< Requires starting a new game.
 
     bool operator==(const SystemSettings&) const = default;
 };
