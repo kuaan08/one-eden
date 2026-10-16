@@ -2,7 +2,7 @@
 #include "eden_uwp/d3d11_hardware_probe.h"
 #include <d3d11.h>
 #include <d3dcompiler.h>
-#include <dxgi.h>
+#include <dxgi1_2.h>
 #include <wrl/client.h>
 
 namespace EdenXbox {
@@ -30,9 +30,13 @@ static D3D11HardwareReport ProbeD3D11(bool use_warp) {
 
     ComPtr<IDXGIDevice> dxgi;
     ComPtr<IDXGIAdapter> adapter;
-    DXGI_ADAPTER_DESC desc{};
+    ComPtr<IDXGIAdapter1> adapter1;
+    DXGI_ADAPTER_DESC1 desc{};
+    // DXGI_ADAPTER_DESC has no Flags. The software-adapter bit is exposed
+    // only by DXGI_ADAPTER_DESC1, retrieved through IDXGIAdapter1.
     if (FAILED(device.As(&dxgi)) || FAILED(dxgi->GetAdapter(&adapter)) ||
-        FAILED(adapter->GetDesc(&desc))) return fail("DXGI hardware adapter", E_FAIL);
+        FAILED(adapter.As(&adapter1)) || FAILED(adapter1->GetDesc1(&desc)))
+        return fail("DXGI adapter identification (IDXGIAdapter1)", E_FAIL);
     out.vendor_id = desc.VendorId;
     out.device_id = desc.DeviceId;
     if (!use_warp && (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0)
