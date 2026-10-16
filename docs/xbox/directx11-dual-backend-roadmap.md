@@ -37,6 +37,22 @@ with real games, BC6/BC7, ASTC, texture cache or other Switch GPU behavior.
 The probe is manually triggered and has no effect on the game's D3D12
 pipeline, performance, settings, presentation or shader cache.
 
+## Opt-in WARP implementation for testing (not full D3D11 gameplay)
+
+- The hardware D3D11 test creates a real D3D_DRIVER_TYPE_HARDWARE device and
+  requires FL10.1 or better. It never transparently chooses WARP.
+- The separate D3D11 WARP test creates D3D_DRIVER_TYPE_WARP, compiles SM4.1
+  shaders, creates color and depth views, draws, and verifies a staging-texture
+  pixel readback. It reports software mode distinctly from hardware.
+- The Switch game's actual D3D12 renderer may be switched to WARP software
+  by choosing the D3D12 adapter mode in Settings, then restarting the game.
+  On startup it uses DXGI EnumWarpAdapter and D3D12CreateDevice with that
+  software adapter; the original hardware mode is the default.
+- If WARP creation fails on Xbox One UWP, the application reports an HRESULT.
+  It does not misrepresent the result as a functional WARP device.
+- No actual D3D11 Switch rasterizer exists yet. WARP is slow and not
+  expected to solve Sonic Mania's CPU/JIT throughput bottleneck.
+
 ## Required next steps before shipping an actual graphics API selector
 
 1. Design a concrete D3D11 rasterizer/backend implementation plugged into

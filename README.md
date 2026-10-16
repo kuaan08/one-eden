@@ -213,6 +213,27 @@ needed; never distribute keys or game dumps.
 and FPS in both variants, and only use the diagnostic variant for logs of
 *A Short Hike* if it still exits.
 
+## Xbox DirectX and WARP experiments
+
+The UWP Settings > System page now exposes three separate controls:
+
+- **Test DirectX 11 hardware**: requires a real DXGI hardware adapter.
+- **Test DirectX 11 WARP**: explicitly creates a D3D11 software device.
+  Both tests compile shaders and check a color/depth offscreen pixel readback.
+  These are tests only and do NOT execute Switch games on D3D11.
+- **Game renderer: D3D12 adapter**: select **Hardware GPU (default)** or
+  **WARP software (experimental)**. The latter explicitly selects the
+  software DXGI adapter for the existing Switch D3D12 renderer, rather
+  than just displaying a setting that has no effect.
+
+D3D12 WARP is CPU rendering and may be unavailable in Xbox UWP; when
+unavailable the emulator reports the failure instead of silently
+replacing the selection with hardware. Changes take effect when the
+game restarts. D3D11 Switch-game support needs an independent rasterizer
+and is not yet implemented. WARP is not a recommended FPS optimization.
+
+See [Dual graphics API roadmap](docs/xbox/directx11-dual-backend-roadmap.md).
+
 ## Update notifications and GitHub Releases
 
 The Xbox One UWP frontend has **Settings → System → Check for updates** and
