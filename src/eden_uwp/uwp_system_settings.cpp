@@ -14,6 +14,7 @@
 #include "video_core/renderer_d3d12/d3d12_present_skip.h"
 #include "video_core/renderer_d3d12/d3d12_cache_policy.h"
 #include "video_core/renderer_d3d12/d3d12_xbox3d_compat.h"
+#include "video_core/renderer_d3d12/d3d12_xbox_warp.h"
 #include "core/hle/service/acc/profile_manager.h"
 
 namespace EdenXbox {
@@ -29,6 +30,7 @@ constexpr auto UpscalingKey = L"system_upscaling";
 constexpr auto ThemeKey = L"system_ui_theme";
 constexpr auto AutoUpdateKey = L"system_auto_update_check";
 constexpr auto DedicatedDepthKey = L"system_xbox_dedicated_depth";
+constexpr auto D3D12WarpKey = L"system_xbox_d3d12_warp";
 constexpr auto DepthProbeModeKey = L"system_xbox_depth_probe_mode";
 constexpr auto ResolutionKey = L"system_xbox_resolution";
 constexpr auto FastmemKey = L"system_xbox_fastmem";
@@ -90,6 +92,8 @@ SystemSettings LoadSystemSettings() {
             settings.ui_theme = UiThemeFromValue(winrt::unbox_value<int32_t>(values.Lookup(ThemeKey)));
         if (values.HasKey(AutoUpdateKey))
             settings.auto_check_updates = winrt::unbox_value<bool>(values.Lookup(AutoUpdateKey));
+        if (values.HasKey(D3D12WarpKey))
+            settings.xbox_d3d12_warp = winrt::unbox_value<bool>(values.Lookup(D3D12WarpKey));
         if (values.HasKey(DepthProbeModeKey))
             settings.xbox_depth_probe_mode =
                 static_cast<unsigned>(winrt::unbox_value<int32_t>(values.Lookup(DepthProbeModeKey))) & 3u;
@@ -134,6 +138,7 @@ bool SaveSystemSettings(const SystemSettings& settings) {
         values.Insert(ThemeKey, winrt::box_value(static_cast<int32_t>(settings.ui_theme)));
         values.Insert(AutoUpdateKey, winrt::box_value(settings.auto_check_updates));
         values.Insert(DedicatedDepthKey, winrt::box_value(settings.xbox_dedicated_depth));
+        values.Insert(D3D12WarpKey, winrt::box_value(settings.xbox_d3d12_warp));
         values.Insert(DepthProbeModeKey, winrt::box_value(static_cast<int32_t>(settings.xbox_depth_probe_mode & 3u)));
         values.Insert(ResolutionKey, winrt::box_value(static_cast<int32_t>(settings.xbox_resolution)));
         values.Insert(FastmemKey, winrt::box_value(static_cast<int32_t>(settings.xbox_fastmem)));
@@ -172,6 +177,7 @@ ResolvedSystem ApplySystemSettings() {
     SetUiTheme(settings.ui_theme);
     D3D12::SetXboxDedicatedDepthEnabled(settings.xbox_dedicated_depth);
     D3D12::SetXboxDepthCompatMode(settings.xbox_depth_probe_mode);
+    D3D12::SetXboxWarpEnabled(settings.xbox_d3d12_warp);
     D3D12::SetXboxPresentInterval(XboxPresentInterval(settings.xbox_frame_skip));
     ApplyUpscaling(settings.upscaling);
     const auto resolved = ResolveSystem(settings, locale);

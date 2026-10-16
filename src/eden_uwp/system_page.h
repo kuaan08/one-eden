@@ -18,7 +18,7 @@ namespace EdenXbox {
 
 struct SystemPage {
     enum Row : std::size_t { UserName, InterfaceLanguage, GameLanguage, Region,
-    UiThemeChoice, CheckUpdates, AutoUpdateCheck, D3D11HardwareTest, XboxDepthFix, XboxDepthProbe, PerfPreset, InternalResolution, FastmemMode,
+    UiThemeChoice, CheckUpdates, AutoUpdateCheck, D3D11HardwareTest, D3D11WarpTest, D3D12WarpMode, XboxDepthFix, XboxDepthProbe, PerfPreset, InternalResolution, FastmemMode,
     DisplayFrameSkip, DiskShaderCache, SpeedCap, JitCacheSize, PipelineEviction, HudFps, HudFrame, HudCpu, HudGpu,
     HudMemory, HudPosition, HudScale, EarlyTextureGc, AdultMods, PerformanceStats,
     PulseSessions, ClearCache, RowCount };
@@ -40,6 +40,7 @@ enum class SystemPageEffect : std::uint8_t {
     ClearCache, ///< Clear the library cache.
     CheckUpdates, ///< Start a read-only GitHub Releases query.
     D3D11HardwareTest, ///< Run hardware-only SM4 offscreen triangle; not a game backend.
+    D3D11WarpTest, ///< Test software WARP DX11 offscreen; not a game backend.
 };
 
 enum class SystemInput : std::uint8_t { Up, Down, Left, Right, Confirm, Back };
@@ -101,6 +102,11 @@ inline SystemPageEffect HandleSystemInput(SystemPage& page, SystemInput input) {
         return SystemPageEffect::Changed;
     case Row::D3D11HardwareTest:
         return input == SystemInput::Confirm ? SystemPageEffect::D3D11HardwareTest : SystemPageEffect::None;
+    case Row::D3D11WarpTest:
+        return input == SystemInput::Confirm ? SystemPageEffect::D3D11WarpTest : SystemPageEffect::None;
+    case Row::D3D12WarpMode:
+        settings.xbox_d3d12_warp = !settings.xbox_d3d12_warp;
+        return SystemPageEffect::Changed;
     case Row::XboxDepthFix:
         settings.xbox_dedicated_depth = !settings.xbox_dedicated_depth;
         return SystemPageEffect::Changed;
@@ -210,6 +216,8 @@ inline I18n::Text SystemRowTitle(SystemPage::Row row) {
     case SystemPage::CheckUpdates:      return Text::UpdateCheckTitle;
     case SystemPage::AutoUpdateCheck:   return Text::UpdateAutoTitle;
     case SystemPage::D3D11HardwareTest: return Text::D3D11TestTitle;
+    case SystemPage::D3D11WarpTest:     return Text::D3D11WarpTestTitle;
+    case SystemPage::D3D12WarpMode:     return Text::D3D12WarpTitle;
     case SystemPage::XboxDepthFix:      return Text::XboxDepthFixTitle;
     case SystemPage::XboxDepthProbe:    return Text::XboxDepthProbeTitle;
     case SystemPage::PerfPreset:        return Text::PerfPresetTitle;
@@ -246,6 +254,8 @@ inline I18n::Text SystemRowHint(SystemPage::Row row) {
     case SystemPage::CheckUpdates:      return Text::UpdateCheckHint;
     case SystemPage::AutoUpdateCheck:   return Text::UpdateAutoHint;
     case SystemPage::D3D11HardwareTest: return Text::D3D11TestHint;
+    case SystemPage::D3D11WarpTest:     return Text::D3D11WarpTestHint;
+    case SystemPage::D3D12WarpMode:     return Text::D3D12WarpHint;
     case SystemPage::XboxDepthFix:      return Text::XboxDepthFixHint;
     case SystemPage::XboxDepthProbe:    return Text::XboxDepthProbeHint;
     case SystemPage::PerfPreset:        return Text::PerfPresetHint;
@@ -295,7 +305,10 @@ inline std::wstring SystemRowValue(const SystemPage& page, SystemPage::Row row) 
         return std::wstring{I18n::Tr(settings.ui_theme == UiTheme::XboxGreen ? Text::ThemeXboxGreen :
             settings.ui_theme == UiTheme::Amoled ? Text::ThemeAmoled : Text::ThemeEden)};
     case SystemPage::CheckUpdates:
-    case SystemPage::D3D11HardwareTest: return {};
+    case SystemPage::D3D11HardwareTest:
+    case SystemPage::D3D11WarpTest: return {};
+    case SystemPage::D3D12WarpMode:
+        return std::wstring{I18n::Tr(settings.xbox_d3d12_warp ? Text::D3D12WarpSoftware : Text::D3D12WarpHardware)};
     case SystemPage::AutoUpdateCheck:
         return std::wstring{I18n::Tr(settings.auto_check_updates ? Text::Yes : Text::No)};
     case SystemPage::XboxDepthFix:

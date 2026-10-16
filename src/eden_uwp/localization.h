@@ -593,6 +593,13 @@ enum class Text : std::uint16_t {
     D3D11TestPassed,
     D3D11TestNoHardware,
     D3D11TestFailed,
+    D3D11WarpTestTitle,
+    D3D11WarpTestHint,
+    D3D11WarpRunning,
+    D3D12WarpTitle,
+    D3D12WarpHint,
+    D3D12WarpHardware,
+    D3D12WarpSoftware,
 
 
     Count

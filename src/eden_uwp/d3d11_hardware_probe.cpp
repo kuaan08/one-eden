@@ -6,7 +6,7 @@
 #include <wrl/client.h>
 
 namespace EdenXbox {
-D3D11HardwareReport ProbeD3D11Hardware() {
+static D3D11HardwareReport ProbeD3D11(bool use_warp) {
     using Microsoft::WRL::ComPtr;
     D3D11HardwareReport out;
     auto fail = [&](const char* stage, HRESULT h) {
@@ -20,10 +20,12 @@ D3D11HardwareReport ProbeD3D11Hardware() {
     ComPtr<ID3D11Device> device;
     ComPtr<ID3D11DeviceContext> context;
     D3D_FEATURE_LEVEL level{};
-    HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0,
+    const auto type = use_warp ? D3D_DRIVER_TYPE_WARP : D3D_DRIVER_TYPE_HARDWARE;
+    HRESULT hr = D3D11CreateDevice(nullptr, type, nullptr, 0,
                                   levels, ARRAYSIZE(levels), D3D11_SDK_VERSION,
                                   &device, &level, &context);
-    if (FAILED(hr)) return fail("D3D11CreateDevice HARDWARE", hr);
+    if (FAILED(hr)) return fail(use_warp ? "D3D11CreateDevice WARP" :
+                                   "D3D11CreateDevice HARDWARE", hr);
     out.feature_level = static_cast<unsigned>(level);
 
     ComPtr<IDXGIDevice> dxgi;
@@ -33,7 +35,7 @@ D3D11HardwareReport ProbeD3D11Hardware() {
         FAILED(adapter->GetDesc(&desc))) return fail("DXGI hardware adapter", E_FAIL);
     out.vendor_id = desc.VendorId;
     out.device_id = desc.DeviceId;
-    if ((desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0)
+    if (!use_warp && (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0)
         return fail("Software adapter detected", E_FAIL);
     if (level < D3D_FEATURE_LEVEL_10_1) return fail("SM4.1 unavailable", E_NOTIMPL);
 
@@ -123,4 +125,6 @@ float4 PS(Output i) : SV_TARGET { return float4(0.2, 0.5, 0.8, 1.0); }
     out.passed = true;
     return out;
 }
+D3D11HardwareReport ProbeD3D11Hardware() { return ProbeD3D11(false); }
+D3D11HardwareReport ProbeD3D11Warp() { return ProbeD3D11(true); }
 } // namespace EdenXbox

@@ -568,5 +568,12 @@ const Catalog EnglishCatalog = MakeCatalog({
     {Text::D3D11TestPassed, L"D3D11 hardware FL{0} passed · game renderer not implemented"},
     {Text::D3D11TestNoHardware, L"No compatible D3D11 hardware device · no WARP fallback"},
     {Text::D3D11TestFailed, L"D3D11 hardware shader/draw failed · check log"},
+    {Text::D3D11WarpTestTitle, L"Test DirectX 11 WARP"},
+    {Text::D3D11WarpTestHint, L"Software SM4.1 test; does not run games"},
+    {Text::D3D11WarpRunning, L"Testing DirectX 11 WARP (CPU)..."},
+    {Text::D3D12WarpTitle, L"Game renderer: D3D12 adapter"},
+    {Text::D3D12WarpHint, L"Hardware or WARP software (slow); restart game"},
+    {Text::D3D12WarpHardware, L"Hardware GPU (default)"},
+    {Text::D3D12WarpSoftware, L"WARP software (experimental)"},
 });
 } // namespace EdenXbox::I18n

@@ -461,18 +461,18 @@ std::optional<std::string> ShowGameLibrary(void* core_window, unsigned width, un
         system_notice_until = std::chrono::steady_clock::time_point::max();
         dirty = true;
     };
-    auto begin_d3d11_smoke = [&] {
+    auto begin_d3d11_smoke = [&](bool warp) {
         if (d3d11_probe_future.valid() &&
             d3d11_probe_future.wait_for(std::chrono::seconds{0}) != std::future_status::ready)
             return;
-        std::packaged_task<D3D11Probe::Result()> task{[] {
+        std::packaged_task<D3D11Probe::Result()> task{[warp] {
             winrt::init_apartment(winrt::apartment_type::multi_threaded);
             struct Uninit { ~Uninit() { winrt::uninit_apartment(); } } uninit;
-            return D3D11Probe::RunHardwareSmokeTest();
+            return warp ? D3D11Probe::RunWarpSmokeTest() : D3D11Probe::RunHardwareSmokeTest();
         }};
         d3d11_probe_future = task.get_future();
         d3d11_probe_worker = std::jthread{std::move(task)};
-        system_page.notice = Tr(T::D3D11TestRunning);
+        system_page.notice = Tr(warp ? T::D3D11WarpRunning : T::D3D11TestRunning);
         system_notice_until = std::chrono::steady_clock::time_point::max();
         dirty = true;
     };
@@ -485,6 +485,7 @@ std::optional<std::string> ShowGameLibrary(void* core_window, unsigned width, un
             const auto resolved = ApplySystemSettings();
             system_page.notice = Tr(saved ? ((system_page.selected == SystemPage::XboxDepthFix ||
                                              system_page.selected == SystemPage::XboxDepthProbe ||
+                                             system_page.selected == SystemPage::D3D12WarpMode ||
                                              system_page.selected == SystemPage::PerfPreset ||
                                              system_page.selected == SystemPage::InternalResolution ||
                                              system_page.selected == SystemPage::FastmemMode ||
@@ -505,7 +506,10 @@ std::optional<std::string> ShowGameLibrary(void* core_window, unsigned width, un
             begin_update_check();
             break;
         case SystemPageEffect::D3D11HardwareTest:
-            begin_d3d11_smoke();
+            begin_d3d11_smoke(false);
+            break;
+        case SystemPageEffect::D3D11WarpTest:
+            begin_d3d11_smoke(true);
             break;
         case SystemPageEffect::ClearCache: {
             reload_metadata();
@@ -536,6 +540,10 @@ std::optional<std::string> ShowGameLibrary(void* core_window, unsigned width, un
         if (d3d11_probe_future.valid() &&
             d3d11_probe_future.wait_for(std::chrono::seconds{0}) == std::future_status::ready) {
             const auto result = d3d11_probe_future.get();
+            LOG_WARNING(Frontend, "D3D11 test: passed={} FL=0x{:04x} vendor=0x{:04x} device=0x{:04x} "
+                        "HRESULT=0x{:08x} stage={}", result.status == D3D11Probe::Status::Passed,
+                        result.feature_level, result.vendor_id, result.device_id,
+                        result.error, result.stage);
             if (result.status == D3D11Probe::Status::Passed) {
                 system_page.notice = I18n::Format(
                     T::D3D11TestPassed, {result.feature_level >= 0xa100 ? L"10.1+" : L"10.0"});

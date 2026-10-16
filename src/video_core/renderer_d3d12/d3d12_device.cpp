@@ -23,6 +23,7 @@
 #include "video_core/renderer_d3d12/d3d12_device.h"
 #include "video_core/renderer_d3d12/diagnostics/d3d12_sm5_probe.h"
 #include "video_core/renderer_d3d12/d3d12_shader_compiler.h"
+#include "video_core/renderer_d3d12/d3d12_xbox_warp.h"
 
 namespace D3D12 {
 
@@ -261,9 +262,20 @@ Device::Device() {
             LOG_INFO(Render, "D3D12: DRED not available");
         }
     }
-    // Feature level 11.0 is all Xbox Series UWP offers; desktop GPUs accept it too.
-    ThrowIfFailed(D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device)),
-                  "D3D12CreateDevice");
+    // Optional software test mode: keep the FULL existing Switch D3D12
+    // renderer, but select a WARP adapter explicitly. Never fall back to
+    // hardware silently: the player needs to know which backend was tested.
+    // This is DirectX 12 WARP, NOT a DirectX 11 game backend.
+    ComPtr<IDXGIAdapter> requested_adapter;
+    const bool warp = XboxWarpEnabled();
+    if (warp) {
+        ThrowIfFailed(factory->EnumWarpAdapter(IID_PPV_ARGS(&requested_adapter)),
+                      "IDXGIFactory4::EnumWarpAdapter (D3D12 WARP unavailable)");
+        LOG_WARNING(Render, "D3D12: WARP software renderer explicitly requested (may be slow)");
+    }
+    ThrowIfFailed(D3D12CreateDevice(requested_adapter.Get(), D3D_FEATURE_LEVEL_11_0,
+                                    IID_PPV_ARGS(&device)),
+                  warp ? "D3D12CreateDevice WARP" : "D3D12CreateDevice hardware");
     if (debug_layer && SUCCEEDED(device.As(&info_queue))) {
         // Guest images are created before the guest says what it clears them to, so every
         // clear is "slower than it could be" by design; hide that one. Guest pixel shaders often
@@ -293,8 +305,10 @@ Device::Device() {
         }
     }
     if (adapter_name.empty()) {
-        adapter_name = "Direct3D 12";
+        adapter_name = warp ? "Direct3D 12 WARP (software)" : "Direct3D 12 hardware";
     }
+    LOG_WARNING(Render, "D3D12: selected adapter class {} name '{}'",
+                warp ? "WARP SOFTWARE" : "HARDWARE", adapter_name);
 
     const D3D12_COMMAND_QUEUE_DESC queue_desc{
         .Type = D3D12_COMMAND_LIST_TYPE_DIRECT,
