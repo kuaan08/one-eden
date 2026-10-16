@@ -14,4 +14,32 @@ struct D3D11HardwareReport {
 // An opt-in hardware capability probe, NOT a Switch game renderer.
 // Does not fall back to D3D11 WARP and never touches the D3D12 game device.
 D3D11HardwareReport ProbeD3D11Hardware();
+// Adapter layer for the existing UWP System page. The D3D11 test is independent
+// from the Nintendo Switch renderer; success must never auto-switch games.
+namespace D3D11Probe {
+enum class Status : std::uint8_t { Passed, NoHardware, Failed };
+struct Result {
+    Status status{Status::Failed};
+    unsigned feature_level{};
+    unsigned vendor_id{};
+    unsigned device_id{};
+    std::uint32_t error{};
+    std::string stage;
+};
+inline Result RunHardwareSmokeTest() {
+    const auto report = ProbeD3D11Hardware();
+    Result r;
+    r.feature_level = report.feature_level;
+    r.vendor_id = report.vendor_id;
+    r.device_id = report.device_id;
+    r.error = report.error;
+    r.stage = report.stage;
+    r.status = report.passed ? Status::Passed :
+        (report.stage == "D3D11CreateDevice HARDWARE" ||
+         report.stage == "Software adapter detected" ||
+         report.stage == "DXGI hardware adapter")
+            ? Status::NoHardware : Status::Failed;
+    return r;
+}
+} // namespace D3D11Probe
 } // namespace EdenXbox
