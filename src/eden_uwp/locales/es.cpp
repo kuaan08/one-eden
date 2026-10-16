@@ -575,5 +575,7 @@ const Catalog SpanishCatalog = MakeCatalog({
     {Text::D3D12WarpHint, L"Hardware o WARP software (lento); reiniciar juego"},
     {Text::D3D12WarpHardware, L"GPU por hardware (predeterminado)"},
     {Text::D3D12WarpSoftware, L"WARP por software (experimental)"},
+    {Text::D3D11WarpPassed, L"DX11 WARP software FL{0} dibujó píxeles (CPU; juegos usan DX12)"},
+    {Text::D3D11WarpFailed, L"DX11 WARP falló o no está disponible; ver registro"},
 });
 } // namespace EdenXbox::I18n

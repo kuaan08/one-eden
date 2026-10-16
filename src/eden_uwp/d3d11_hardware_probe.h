@@ -21,6 +21,7 @@ namespace D3D11Probe {
 enum class Status : std::uint8_t { Passed, NoHardware, Failed };
 struct Result {
     Status status{Status::Failed};
+    bool warp{};
     unsigned feature_level{};
     unsigned vendor_id{};
     unsigned device_id{};
@@ -30,6 +31,7 @@ struct Result {
 inline Result RunSmokeTest(bool use_warp) {
     const auto report = use_warp ? ProbeD3D11Warp() : ProbeD3D11Hardware();
     Result r;
+    r.warp = use_warp;
     r.feature_level = report.feature_level;
     r.vendor_id = report.vendor_id;
     r.device_id = report.device_id;

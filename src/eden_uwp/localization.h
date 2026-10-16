@@ -600,6 +600,8 @@ enum class Text : std::uint16_t {
     D3D12WarpHint,
     D3D12WarpHardware,
     D3D12WarpSoftware,
+    D3D11WarpPassed,
+    D3D11WarpFailed,
 
 
     Count

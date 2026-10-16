@@ -546,11 +546,13 @@ std::optional<std::string> ShowGameLibrary(void* core_window, unsigned width, un
                         result.error, result.stage);
             if (result.status == D3D11Probe::Status::Passed) {
                 system_page.notice = I18n::Format(
-                    T::D3D11TestPassed, {result.feature_level >= 0xa100 ? L"10.1+" : L"10.0"});
+                    result.warp ? T::D3D11WarpPassed : T::D3D11TestPassed,
+                    {result.feature_level >= 0xb000 ? L"11.0" :
+                     result.feature_level >= 0xa100 ? L"10.1" : L"10.0"});
             } else if (result.status == D3D11Probe::Status::NoHardware) {
-                system_page.notice = Tr(T::D3D11TestNoHardware);
+                system_page.notice = Tr(result.warp ? T::D3D11WarpFailed : T::D3D11TestNoHardware);
             } else {
-                system_page.notice = Tr(T::D3D11TestFailed);
+                system_page.notice = Tr(result.warp ? T::D3D11WarpFailed : T::D3D11TestFailed);
             }
             system_notice_until = now + std::chrono::seconds{20};
             dirty = true;
