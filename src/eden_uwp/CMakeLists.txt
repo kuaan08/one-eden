@@ -21,6 +21,8 @@ add_executable(eden-uwp WIN32
     uwp_library.cpp
     update_checker.cpp
     update_checker.h
+    d3d11_hardware_probe.cpp
+    d3d11_hardware_probe.h
     uwp_library_canvas.cpp
     uwp_library_canvas.h
     uwp_library.h
@@ -138,7 +140,7 @@ target_link_libraries(eden-uwp PRIVATE common core video_core audio_core fronten
 
 # WinRT (CoreApplication, IFrameworkView, ApplicationData) comes from the Store umbrella import lib.
 target_link_libraries(eden-uwp PRIVATE WindowsApp.lib)
-target_link_libraries(eden-uwp PRIVATE d3d11 d2d1 dwrite dxgi windowscodecs)
+target_link_libraries(eden-uwp PRIVATE d3d11 d3dcompiler d2d1 dwrite dxgi windowscodecs)
 
 # Win32 networking used by core's network_interface (ConvertLengthToIpv4Mask etc.), plus crypt32 +
 # user32 which the from-source OpenSSL pulls (cert store + its fatal-error/service-detection code).

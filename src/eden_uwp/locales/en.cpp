@@ -562,5 +562,11 @@ const Catalog EnglishCatalog = MakeCatalog({
     {Text::XboxDepthSkipQuery, L"Skip post-depth driver query"},
     {Text::XboxDepthSingleDsv, L"Single-layer depth view (2D)"},
     {Text::XboxDepthBoth, L"Both experiments (test)"},
+    {Text::D3D11TestTitle, L"Test DirectX 11 GPU hardware"},
+    {Text::D3D11TestHint, L"Hardware FL10.x / SM4 offscreen draw · not a game renderer"},
+    {Text::D3D11TestRunning, L"Testing DirectX 11 hardware..."},
+    {Text::D3D11TestPassed, L"D3D11 hardware FL{0} passed · game renderer not implemented"},
+    {Text::D3D11TestNoHardware, L"No compatible D3D11 hardware device · no WARP fallback"},
+    {Text::D3D11TestFailed, L"D3D11 hardware shader/draw failed · check log"},
 });
 } // namespace EdenXbox::I18n

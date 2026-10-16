@@ -469,6 +469,7 @@ private:
         static constexpr std::array<ConfigurationIcon, SystemPage::RowCount> icons{
             ConfigurationIcon::User, ConfigurationIcon::Language, ConfigurationIcon::Controller,
             ConfigurationIcon::Region, ConfigurationIcon::Settings, ConfigurationIcon::Settings,
+            ConfigurationIcon::Settings,
             ConfigurationIcon::Settings, ConfigurationIcon::Settings, ConfigurationIcon::Settings,
             ConfigurationIcon::Settings, ConfigurationIcon::Settings, ConfigurationIcon::Settings,
             ConfigurationIcon::Settings, ConfigurationIcon::Settings, ConfigurationIcon::Settings,

@@ -587,6 +587,12 @@ enum class Text : std::uint16_t {
     XboxDepthSkipQuery,
     XboxDepthSingleDsv,
     XboxDepthBoth,
+    D3D11TestTitle,
+    D3D11TestHint,
+    D3D11TestRunning,
+    D3D11TestPassed,
+    D3D11TestNoHardware,
+    D3D11TestFailed,
 
 
     Count

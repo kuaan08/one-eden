@@ -18,7 +18,7 @@ namespace EdenXbox {
 
 struct SystemPage {
     enum Row : std::size_t { UserName, InterfaceLanguage, GameLanguage, Region,
-    UiThemeChoice, CheckUpdates, AutoUpdateCheck, XboxDepthFix, XboxDepthProbe, PerfPreset, InternalResolution, FastmemMode,
+    UiThemeChoice, CheckUpdates, AutoUpdateCheck, D3D11HardwareTest, XboxDepthFix, XboxDepthProbe, PerfPreset, InternalResolution, FastmemMode,
     DisplayFrameSkip, DiskShaderCache, SpeedCap, JitCacheSize, PipelineEviction, HudFps, HudFrame, HudCpu, HudGpu,
     HudMemory, HudPosition, HudScale, EarlyTextureGc, AdultMods, PerformanceStats,
     PulseSessions, ClearCache, RowCount };
@@ -39,6 +39,7 @@ enum class SystemPageEffect : std::uint8_t {
     NameDone,   ///< The editor closed with a new name in settings: save and apply.
     ClearCache, ///< Clear the library cache.
     CheckUpdates, ///< Start a read-only GitHub Releases query.
+    D3D11HardwareTest, ///< Run hardware-only SM4 offscreen triangle; not a game backend.
 };
 
 enum class SystemInput : std::uint8_t { Up, Down, Left, Right, Confirm, Back };
@@ -98,6 +99,8 @@ inline SystemPageEffect HandleSystemInput(SystemPage& page, SystemInput input) {
     case Row::AutoUpdateCheck:
         settings.auto_check_updates = !settings.auto_check_updates;
         return SystemPageEffect::Changed;
+    case Row::D3D11HardwareTest:
+        return input == SystemInput::Confirm ? SystemPageEffect::D3D11HardwareTest : SystemPageEffect::None;
     case Row::XboxDepthFix:
         settings.xbox_dedicated_depth = !settings.xbox_dedicated_depth;
         return SystemPageEffect::Changed;
@@ -206,6 +209,7 @@ inline I18n::Text SystemRowTitle(SystemPage::Row row) {
     case SystemPage::UiThemeChoice:     return Text::ThemeTitle;
     case SystemPage::CheckUpdates:      return Text::UpdateCheckTitle;
     case SystemPage::AutoUpdateCheck:   return Text::UpdateAutoTitle;
+    case SystemPage::D3D11HardwareTest: return Text::D3D11TestTitle;
     case SystemPage::XboxDepthFix:      return Text::XboxDepthFixTitle;
     case SystemPage::XboxDepthProbe:    return Text::XboxDepthProbeTitle;
     case SystemPage::PerfPreset:        return Text::PerfPresetTitle;
@@ -241,6 +245,7 @@ inline I18n::Text SystemRowHint(SystemPage::Row row) {
     case SystemPage::UiThemeChoice:     return Text::ThemeHint;
     case SystemPage::CheckUpdates:      return Text::UpdateCheckHint;
     case SystemPage::AutoUpdateCheck:   return Text::UpdateAutoHint;
+    case SystemPage::D3D11HardwareTest: return Text::D3D11TestHint;
     case SystemPage::XboxDepthFix:      return Text::XboxDepthFixHint;
     case SystemPage::XboxDepthProbe:    return Text::XboxDepthProbeHint;
     case SystemPage::PerfPreset:        return Text::PerfPresetHint;
@@ -289,7 +294,8 @@ inline std::wstring SystemRowValue(const SystemPage& page, SystemPage::Row row) 
     case SystemPage::UiThemeChoice:
         return std::wstring{I18n::Tr(settings.ui_theme == UiTheme::XboxGreen ? Text::ThemeXboxGreen :
             settings.ui_theme == UiTheme::Amoled ? Text::ThemeAmoled : Text::ThemeEden)};
-    case SystemPage::CheckUpdates: return {};
+    case SystemPage::CheckUpdates:
+    case SystemPage::D3D11HardwareTest: return {};
     case SystemPage::AutoUpdateCheck:
         return std::wstring{I18n::Tr(settings.auto_check_updates ? Text::Yes : Text::No)};
     case SystemPage::XboxDepthFix:

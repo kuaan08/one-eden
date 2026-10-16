@@ -546,5 +546,11 @@ const Catalog PortugueseBrazilianCatalog = MakeCatalog({
     {Text::XboxDepthSkipQuery, L"Pular consulta após profundidade"},
     {Text::XboxDepthSingleDsv, L"Vista de profundidade única (2D)"},
     {Text::XboxDepthBoth, L"Ambos os testes"},
+    {Text::D3D11TestTitle, L"Testar GPU DirectX 11"},
+    {Text::D3D11TestHint, L"GPU FL10.x / SM4 · não executa jogos"},
+    {Text::D3D11TestRunning, L"Testando DirectX 11..."},
+    {Text::D3D11TestPassed, L"D3D11 FL{0} OK · renderizador de jogos pendente"},
+    {Text::D3D11TestNoHardware, L"D3D11 hardware indisponível · sem WARP"},
+    {Text::D3D11TestFailed, L"Falha shader/desenho D3D11 · veja o log"},
 });
 } // namespace EdenXbox::I18n

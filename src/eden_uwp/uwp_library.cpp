@@ -7,6 +7,7 @@
 #include "eden_uwp/storage_path.h"
 #include "eden_uwp/uwp_file_manager.h"
 #include "eden_uwp/update_checker.h"
+#include "eden_uwp/d3d11_hardware_probe.h"
 
 #include <algorithm>
 #include <chrono>
@@ -90,6 +91,8 @@ std::optional<std::string> ShowGameLibrary(void* core_window, unsigned width, un
     const LibraryCache cache{DefaultLibraryCacheDirectory()};
     bool return_to_configuration = false;
     unsigned picker_kind = 0; // 0 games, 1 keys, 2 firmware
+    std::future<D3D11Probe::Result> d3d11_probe_future;
+    std::jthread d3d11_probe_worker;
     std::future<Updates::Result> update_future;
     std::jthread update_worker;
     std::future<FileSetupStatus> setup_future;
@@ -458,6 +461,21 @@ std::optional<std::string> ShowGameLibrary(void* core_window, unsigned width, un
         system_notice_until = std::chrono::steady_clock::time_point::max();
         dirty = true;
     };
+    auto begin_d3d11_smoke = [&] {
+        if (d3d11_probe_future.valid() &&
+            d3d11_probe_future.wait_for(std::chrono::seconds{0}) != std::future_status::ready)
+            return;
+        std::packaged_task<D3D11Probe::Result()> task{[] {
+            winrt::init_apartment(winrt::apartment_type::multi_threaded);
+            struct Uninit { ~Uninit() { winrt::uninit_apartment(); } } uninit;
+            return D3D11Probe::RunHardwareSmokeTest();
+        }};
+        d3d11_probe_future = task.get_future();
+        d3d11_probe_worker = std::jthread{std::move(task)};
+        system_page.notice = Tr(T::D3D11TestRunning);
+        system_notice_until = std::chrono::steady_clock::time_point::max();
+        dirty = true;
+    };
     // Saves and applies the System page; the interface switches language on the next frame.
     auto apply_system_effect = [&](SystemPageEffect effect, std::chrono::steady_clock::time_point now) {
         switch (effect) {
@@ -486,6 +504,9 @@ std::optional<std::string> ShowGameLibrary(void* core_window, unsigned width, un
         case SystemPageEffect::CheckUpdates:
             begin_update_check();
             break;
+        case SystemPageEffect::D3D11HardwareTest:
+            begin_d3d11_smoke();
+            break;
         case SystemPageEffect::ClearCache: {
             reload_metadata();
             canvas->InvalidateCovers();
@@ -512,6 +533,20 @@ std::optional<std::string> ShowGameLibrary(void* core_window, unsigned width, un
     while (true) {
         window.Dispatcher().ProcessEvents(CoreProcessEventsOption::ProcessAllIfPresent);
         const auto now = std::chrono::steady_clock::now();
+        if (d3d11_probe_future.valid() &&
+            d3d11_probe_future.wait_for(std::chrono::seconds{0}) == std::future_status::ready) {
+            const auto result = d3d11_probe_future.get();
+            if (result.status == D3D11Probe::Status::Passed) {
+                system_page.notice = I18n::Format(
+                    T::D3D11TestPassed, {result.feature_level >= 0xa100 ? L"10.1+" : L"10.0"});
+            } else if (result.status == D3D11Probe::Status::NoHardware) {
+                system_page.notice = Tr(T::D3D11TestNoHardware);
+            } else {
+                system_page.notice = Tr(T::D3D11TestFailed);
+            }
+            system_notice_until = now + std::chrono::seconds{20};
+            dirty = true;
+        }
         if (update_future.valid() &&
             update_future.wait_for(std::chrono::seconds{0}) == std::future_status::ready) {
             const auto result = update_future.get();
