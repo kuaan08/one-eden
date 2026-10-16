@@ -97,7 +97,29 @@ float4 PS(Output i) : SV_TARGET { return float4(0.2, 0.5, 0.8, 1.0); }
     context->PSSetShader(ps.Get(), nullptr, 0);
     context->Draw(3, 0);
     context->Flush();
+
+    // An accepted Draw call does not prove the GPU rendered pixels. Read back
+    // the center texel before reporting DX11 hardware success.
+    D3D11_TEXTURE2D_DESC staging = tex;
+    staging.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    staging.Usage = D3D11_USAGE_STAGING;
+    staging.BindFlags = 0;
+    staging.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    staging.MiscFlags = 0;
+    ComPtr<ID3D11Texture2D> readback;
+    hr = device->CreateTexture2D(&staging, nullptr, &readback);
+    if (FAILED(hr)) return fail("CreateTexture2D staging", hr);
+    context->CopyResource(readback.Get(), color.Get());
+    D3D11_MAPPED_SUBRESOURCE mapped{};
+    hr = context->Map(readback.Get(), 0, D3D11_MAP_READ, 0, &mapped);
+    if (FAILED(hr)) return fail("Map offscreen draw", hr);
+    const auto* pixels = static_cast<const unsigned char*>(mapped.pData);
+    const auto* pixel = pixels + 16u * mapped.RowPitch + 16u * 4u;
+    const bool drawn = pixel[0] > 20 && pixel[1] > 90 &&
+                       pixel[2] > 145 && pixel[3] > 220;
+    context->Unmap(readback.Get(), 0);
     context->ClearState();
+    if (!drawn) return fail("SM4.1 offscreen pixel mismatch", E_FAIL);
     out.passed = true;
     return out;
 }
