@@ -1,143 +1,104 @@
-// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "eden_uwp/d3d11_hardware_probe.h"
-
-#include <array>
-#include <cstring>
 #include <d3d11.h>
 #include <d3dcompiler.h>
 #include <dxgi.h>
 #include <wrl/client.h>
-#include "common/logging.h"
 
-namespace EdenXbox::D3D11Probe {
-using Microsoft::WRL::ComPtr;
-namespace {
-constexpr char VertexSource[] = R"(
-float4 main(uint vertex : SV_VertexID) : SV_POSITION {
-    float2 p = vertex == 0 ? float2(-1.0,-1.0) :
-               vertex == 1 ? float2(-1.0, 3.0) : float2(3.0,-1.0);
-    return float4(p, 0.0, 1.0);
-})";
-constexpr char PixelSource[] = R"(
-float4 main() : SV_Target { return float4(1.0, 0.0, 0.0, 1.0); }
-)";
-void Report(const char* stage, HRESULT hr, const Result& r) {
-    LOG_WARNING(Frontend,
-        "Xbox D3D11 hardware smoke: {} hr=0x{:08x} feature=0x{:x} vendor=0x{:04x} device=0x{:04x} hardware={}",
-        stage, static_cast<std::uint32_t>(hr), r.feature_level,
-        r.vendor_id, r.device_id, r.hardware_driver);
-}
-} // namespace
-
-Result RunHardwareSmokeTest() {
-    Result result{};
+namespace EdenXbox {
+D3D11HardwareReport ProbeD3D11Hardware() {
+    using Microsoft::WRL::ComPtr;
+    D3D11HardwareReport out;
+    auto fail = [&](const char* stage, HRESULT h) {
+        out.stage = stage;
+        out.error = static_cast<std::uint32_t>(h);
+        return out;
+    };
     const D3D_FEATURE_LEVEL levels[]{D3D_FEATURE_LEVEL_11_0,
                                       D3D_FEATURE_LEVEL_10_1,
                                       D3D_FEATURE_LEVEL_10_0};
-    D3D_FEATURE_LEVEL selected{};
     ComPtr<ID3D11Device> device;
     ComPtr<ID3D11DeviceContext> context;
-    // Explicit HARDWARE only. Falling back to WARP would saturate the slow
-    // Jaguar CPU and invalidate any claimed 2D/3D performance improvement.
+    D3D_FEATURE_LEVEL level{};
     HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0,
-        levels, static_cast<UINT>(std::size(levels)), D3D11_SDK_VERSION,
-        &device, &selected, &context);
-    result.feature_level = static_cast<std::uint32_t>(selected);
-    result.hresult = static_cast<std::uint32_t>(hr);
-    if (FAILED(hr) || !device || !context) {
-        result.status = Status::NoHardware;
-        Report("create-hardware-device", hr, result);
-        return result;
-    }
-    result.hardware_driver = true;
-    ComPtr<IDXGIDevice> dxgi_device;
-    if (SUCCEEDED(device.As(&dxgi_device))) {
-        ComPtr<IDXGIAdapter> adapter;
-        if (SUCCEEDED(dxgi_device->GetAdapter(&adapter))) {
-            DXGI_ADAPTER_DESC desc{};
-            if (SUCCEEDED(adapter->GetDesc(&desc))) {
-                result.vendor_id = desc.VendorId;
-                result.device_id = desc.DeviceId;
-            }
-        }
-    }
-    Report("hardware-device-created", S_OK, result);
+                                  levels, ARRAYSIZE(levels), D3D11_SDK_VERSION,
+                                  &device, &level, &context);
+    if (FAILED(hr)) return fail("D3D11CreateDevice HARDWARE", hr);
+    out.feature_level = static_cast<unsigned>(level);
 
-    const char* const profile = selected >= D3D_FEATURE_LEVEL_10_1 ? "vs_4_1" : "vs_4_0";
-    const char* const pixel_profile = selected >= D3D_FEATURE_LEVEL_10_1 ? "ps_4_1" : "ps_4_0";
-    ComPtr<ID3DBlob> vertex_blob, pixel_blob, errors;
-    hr = D3DCompile(VertexSource, std::strlen(VertexSource), nullptr, nullptr, nullptr,
-                    "main", profile, D3DCOMPILE_ENABLE_STRICTNESS, 0,
-                    &vertex_blob, &errors);
-    if (FAILED(hr) || !vertex_blob) {
-        result.status = Status::ShaderFailed; result.hresult = static_cast<std::uint32_t>(hr);
-        Report("compile-vertex-SM4", hr, result); return result;
-    }
+    ComPtr<IDXGIDevice> dxgi;
+    ComPtr<IDXGIAdapter> adapter;
+    DXGI_ADAPTER_DESC desc{};
+    if (FAILED(device.As(&dxgi)) || FAILED(dxgi->GetAdapter(&adapter)) ||
+        FAILED(adapter->GetDesc(&desc))) return fail("DXGI hardware adapter", E_FAIL);
+    out.vendor_id = desc.VendorId;
+    out.device_id = desc.DeviceId;
+    if ((desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0)
+        return fail("Software adapter detected", E_FAIL);
+    if (level < D3D_FEATURE_LEVEL_10_1) return fail("SM4.1 unavailable", E_NOTIMPL);
+
+    // Compile real SM4.1 vertex/pixel shaders for the FL10.1 hardware path.
+    constexpr char shader[] = R"(
+struct Output { float4 position : SV_POSITION; };
+Output VS(uint i : SV_VertexID) {
+    Output o;
+    o.position = float4(i == 1 ? 3.0 : -1.0, i == 2 ? 3.0 : -1.0, 0.5, 1.0);
+    return o;
+}
+float4 PS(Output i) : SV_TARGET { return float4(0.2, 0.5, 0.8, 1.0); }
+)";
+    ComPtr<ID3DBlob> vsb, psb, errors;
+    hr = D3DCompile(shader, sizeof(shader) - 1, nullptr, nullptr, nullptr,
+                    "VS", "vs_4_1", D3DCOMPILE_ENABLE_STRICTNESS, 0, &vsb, &errors);
+    if (FAILED(hr)) return fail("FXC VS SM4.1", hr);
     errors.Reset();
-    hr = D3DCompile(PixelSource, std::strlen(PixelSource), nullptr, nullptr, nullptr,
-                    "main", pixel_profile, D3DCOMPILE_ENABLE_STRICTNESS, 0,
-                    &pixel_blob, &errors);
-    if (FAILED(hr) || !pixel_blob) {
-        result.status = Status::ShaderFailed; result.hresult = static_cast<std::uint32_t>(hr);
-        Report("compile-pixel-SM4", hr, result); return result;
-    }
+    hr = D3DCompile(shader, sizeof(shader) - 1, nullptr, nullptr, nullptr,
+                    "PS", "ps_4_1", D3DCOMPILE_ENABLE_STRICTNESS, 0, &psb, &errors);
+    if (FAILED(hr)) return fail("FXC PS SM4.1", hr);
     ComPtr<ID3D11VertexShader> vs;
     ComPtr<ID3D11PixelShader> ps;
-    hr = device->CreateVertexShader(vertex_blob->GetBufferPointer(), vertex_blob->GetBufferSize(),
+    hr = device->CreateVertexShader(vsb->GetBufferPointer(), vsb->GetBufferSize(),
                                     nullptr, &vs);
-    if (SUCCEEDED(hr)) hr = device->CreatePixelShader(pixel_blob->GetBufferPointer(),
-                                                      pixel_blob->GetBufferSize(), nullptr, &ps);
-    if (FAILED(hr)) {
-        result.status = Status::ShaderFailed; result.hresult = static_cast<std::uint32_t>(hr);
-        Report("create-shaders", hr, result); return result;
-    }
-    D3D11_TEXTURE2D_DESC texture{};
-    texture.Width = 4; texture.Height = 4;
-    texture.MipLevels = 1; texture.ArraySize = 1;
-    texture.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-    texture.SampleDesc.Count = 1;
-    texture.Usage = D3D11_USAGE_DEFAULT;
-    texture.BindFlags = D3D11_BIND_RENDER_TARGET;
-    ComPtr<ID3D11Texture2D> color, staging;
-    ComPtr<ID3D11RenderTargetView> rtv;
-    hr = device->CreateTexture2D(&texture, nullptr, &color);
-    if (SUCCEEDED(hr)) hr = device->CreateRenderTargetView(color.Get(), nullptr, &rtv);
-    texture.Usage = D3D11_USAGE_STAGING;
-    texture.BindFlags = 0;
-    texture.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-    if (SUCCEEDED(hr)) hr = device->CreateTexture2D(&texture, nullptr, &staging);
-    if (FAILED(hr)) {
-        result.status = Status::SetupFailed; result.hresult = static_cast<std::uint32_t>(hr);
-        Report("create-offscreen-textures", hr, result); return result;
-    }
+    if (FAILED(hr)) return fail("CreateVertexShader", hr);
+    hr = device->CreatePixelShader(psb->GetBufferPointer(), psb->GetBufferSize(),
+                                   nullptr, &ps);
+    if (FAILED(hr)) return fail("CreatePixelShader", hr);
 
-    ID3D11RenderTargetView* targets[]{rtv.Get()};
-    const D3D11_VIEWPORT viewport{0.f, 0.f, 4.f, 4.f, 0.f, 1.f};
-    const float clear_color[]{0.f, 0.f, 0.f, 1.f};
-    context->OMSetRenderTargets(1, targets, nullptr);
+    D3D11_TEXTURE2D_DESC tex{};
+    tex.Width = 32; tex.Height = 32; tex.MipLevels = 1; tex.ArraySize = 1;
+    tex.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    tex.SampleDesc.Count = 1;
+    tex.Usage = D3D11_USAGE_DEFAULT;
+    tex.BindFlags = D3D11_BIND_RENDER_TARGET;
+    ComPtr<ID3D11Texture2D> color;
+    ComPtr<ID3D11RenderTargetView> rtv;
+    hr = device->CreateTexture2D(&tex, nullptr, &color);
+    if (FAILED(hr)) return fail("CreateTexture2D color", hr);
+    hr = device->CreateRenderTargetView(color.Get(), nullptr, &rtv);
+    if (FAILED(hr)) return fail("CreateRenderTargetView", hr);
+    tex.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+    tex.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+    ComPtr<ID3D11Texture2D> depth;
+    ComPtr<ID3D11DepthStencilView> dsv;
+    hr = device->CreateTexture2D(&tex, nullptr, &depth);
+    if (FAILED(hr)) return fail("CreateTexture2D depth", hr);
+    hr = device->CreateDepthStencilView(depth.Get(), nullptr, &dsv);
+    if (FAILED(hr)) return fail("CreateDepthStencilView", hr);
+    D3D11_VIEWPORT viewport{};
+    viewport.Width = 32; viewport.Height = 32; viewport.MaxDepth = 1;
     context->RSSetViewports(1, &viewport);
-    context->ClearRenderTargetView(rtv.Get(), clear_color);
+    const float clear[]{0, 0, 0, 1};
+    context->ClearRenderTargetView(rtv.Get(), clear);
+    context->ClearDepthStencilView(dsv.Get(), D3D11_CLEAR_DEPTH, 1, 0);
+    ID3D11RenderTargetView* target = rtv.Get();
+    context->OMSetRenderTargets(1, &target, dsv.Get());
     context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     context->VSSetShader(vs.Get(), nullptr, 0);
     context->PSSetShader(ps.Get(), nullptr, 0);
     context->Draw(3, 0);
-    context->CopyResource(staging.Get(), color.Get());
-    D3D11_MAPPED_SUBRESOURCE mapped{};
-    hr = context->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped);
-    if (FAILED(hr)) {
-        result.status = Status::SetupFailed; result.hresult = static_cast<std::uint32_t>(hr);
-        Report("readback-map", hr, result); return result;
-    }
-    const auto* pixel = static_cast<const std::uint8_t*>(mapped.pData) +
-                        2 * mapped.RowPitch + 2 * 4;
-    const bool red = pixel[0] > 200 && pixel[1] < 32 &&
-                     pixel[2] < 32 && pixel[3] > 200;
-    context->Unmap(staging.Get(), 0);
+    context->Flush();
     context->ClearState();
-    result.status = red ? Status::Passed : Status::PixelMismatch;
-    result.hresult = static_cast<std::uint32_t>(S_OK);
-    Report(red ? "draw-and-readback-PASS" : "draw-and-readback-MISMATCH", S_OK, result);
-    return result;
+    out.passed = true;
+    return out;
 }
-} // namespace EdenXbox::D3D11Probe
+} // namespace EdenXbox
